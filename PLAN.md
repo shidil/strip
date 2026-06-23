@@ -176,12 +176,27 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Q
         `OverlayController.toggleHelp()`; `.toggleHelp` wired in `AppDelegate.handle` + "Keyboard help…"
         menu item. Chips show bare keys; subtitle notes the ⌃⌥ Mod chord. ✅ user-confirmed.
       - Pin **badge** is now visible (gold dot on the rail chip). ✅
-- [ ] **M5 — Overview + polish.**
-      - **Overview** (⌃⌥Space): grid of cards, one per ring window (app name + accent placeholder —
-        real thumbnails need Screen Recording, deferred). Click a card to center+close. Prototype
-        lines **97-109**. Wire the `.toggleOverview` stub in `AppDelegate.handle`.
-      - Confirm ⌃⌥T spring cycling reads well; tune presets. **User feedback: Track and Pop feel
-        best; keep Glide optional.**
+- [x] **M5 — Overview + polish.** ✅
+      - [x] **Overview** (⌃⌥Space): dimmed grid of cards (on the active display), one per ring window
+        (app name + title over an accent placeholder — real thumbnails need Screen Recording,
+        deferred). Active window framed by its accent; pinned windows get a "PINNED" badge. Click a
+        card → center + close. Prototype lines **97-109** / `overviewWindows` **280-288**.
+        *Implemented:* `Sources/StripKit/Overlay/OverviewView.swift`;
+        `OverlayController.toggleOverview()` (lazy `.popUpMenu`-level panel like the help overlay,
+        rebuilt from the cached `lastSnapshot` and kept in sync while open); `.toggleOverview` wired
+        in `AppDelegate.handle` + an "Overview" status-menu item. `RailItem` extended with
+        `appName`/`title` for card labels. Card click reuses the existing `onCenter` → `setCenter(id)`.
+        Verified live (user screenshot confirmed). **Two layout/feel decisions worth keeping:**
+        - **Centered rows, not `LazyVGrid`.** A fixed-column grid left-aligns the last partial row;
+          instead the cards are chunked into rows of 3 (the prototype's natural wrap), each row a
+          centered `HStack(maxWidth: .infinity)`, so a lone trailing card centers under the row above.
+        - **Plain translucent dim, not a behind-window blur.** An `NSVisualEffectView`
+          (`.behindWindow`) was tried for the prototype's `blur(13px)` but renders as an *opaque grey*
+          on a non-activating overlay panel (the "Reduce transparency" fallback), which looked worse
+          than a plain `Color(...).opacity(0.55)` see-through dim. The plain dim is the chosen look.
+      - [x] **Spring polish.** Presets kept as-is — user feedback already confirmed **Track and Pop
+        feel best**, and the cycle order `[track, pop, glide]` puts those two first with **Glide last
+        (optional)**. ⌃⌥T cycling updates the status pill's transition label. No retune warranted.
 
 ## Prototype reference & feel notes (for M4/M5)
 

@@ -32,7 +32,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
-    /// Route a hotkey command to the controller. (Pin/overview/help land in M3–M5.)
+    /// Route a hotkey command to the controller.
     private func handle(_ command: HotkeyCommand) {
         switch command {
         case .slidePrev: controller.rotate(-1)
@@ -46,8 +46,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         case .cycleTransition: controller.cycleSpring()
         case .togglePin: controller.togglePin()
         case .toggleHelp: overlay.toggleHelp()
-        case .toggleOverview:
-            Log.line("command \(command) — coming in a later milestone")
+        case .toggleOverview: overlay.toggleOverview()
         }
     }
 
@@ -88,6 +87,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         add(menu, "Pin / unpin focused slot", #selector(togglePin), "p")
 
         menu.addItem(.separator())
+        add(menu, "Overview", #selector(toggleOverview), "")
         add(menu, "Keyboard help…", #selector(toggleHelp), "/")
 
         menu.addItem(.separator())
@@ -113,6 +113,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func slidePrev() { controller.rotate(-1) }
     @objc private func slideNext() { controller.rotate(1) }
     @objc private func togglePin() { controller.togglePin() }
+    @objc private func toggleOverview() { overlay.toggleOverview() }
     @objc private func toggleHelp() { overlay.toggleHelp() }
     @objc private func quit() { NSApp.terminate(nil) }
 

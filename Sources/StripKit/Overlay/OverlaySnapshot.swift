@@ -6,6 +6,10 @@ public struct RailItem: Identifiable {
     public let id: CGWindowID
     /// Single-character app chip (`Theme.letter`).
     public let letter: String
+    /// Owning app's localized name — shown on the overview card.
+    public let appName: String
+    /// Last-known window title — shown on the overview card.
+    public let title: String
     /// Deterministic per-app accent (`Theme.accent`).
     public let accent: NSColor
     /// Occupies a currently-visible slot → full opacity (otherwise dimmed).
@@ -15,10 +19,12 @@ public struct RailItem: Identifiable {
     /// Pinned → gold pin dot.
     public let pinned: Bool
 
-    public init(id: CGWindowID, letter: String, accent: NSColor,
+    public init(id: CGWindowID, letter: String, appName: String, title: String, accent: NSColor,
                 assigned: Bool, active: Bool, pinned: Bool) {
         self.id = id
         self.letter = letter
+        self.appName = appName
+        self.title = title
         self.accent = accent
         self.assigned = assigned
         self.active = active

@@ -16,7 +16,10 @@ public final class OverlayController {
     private let statusHosting: NSHostingView<AnyView>
     private let focusRingPanel: NSPanel
     private var helpPanel: NSPanel?
+    private var overviewPanel: NSPanel?
     private var lastScreen: NSScreen?
+    /// Latest snapshot, so the overview (opened on demand) can render a card per ring window.
+    private var lastSnapshot: OverlaySnapshot?
     /// Accent of the focused window, captured from the latest snapshot so the per-tick ring updates
     /// (which carry only a frame) can tint the border without re-deriving it.
     private var focusAccent: NSColor = .white
@@ -52,7 +55,10 @@ public final class OverlayController {
     public func update(_ snapshot: OverlaySnapshot) {
         onMain {
             self.lastScreen = snapshot.screen
+            self.lastSnapshot = snapshot
             self.focusAccent = snapshot.activeAccent ?? .white
+            // Keep an open overview in sync with the live ring.
+            if self.overviewPanel != nil { self.renderOverview(into: self.overviewPanel!, snapshot) }
             self.focusRingPanel.contentView?.layer?.borderColor = self.focusAccent.cgColor
             let vis = snapshot.screen.visibleFrame
 
@@ -101,6 +107,42 @@ public final class OverlayController {
             panel.orderFrontRegardless()
             self.helpPanel = panel
         }
+    }
+
+    /// Show/hide the overview (⌃⌥Space): a dimmed full-screen grid with a card per ring window.
+    /// Clicking a card centers that window (`onCenter`) and dismisses. No-op until a snapshot exists.
+    public func toggleOverview() {
+        onMain {
+            if let panel = self.overviewPanel {
+                panel.orderOut(nil)
+                self.overviewPanel = nil
+                Log.line("overview: closed")
+                return
+            }
+            guard let snapshot = self.lastSnapshot,
+                  let screen = self.lastScreen ?? NSScreen.main else {
+                Log.line("overview: no windows to show")
+                return
+            }
+            Log.line("overview: open — \(snapshot.rail.count) window(s)")
+            let panel = Self.makePanel(level: .popUpMenu)
+            self.renderOverview(into: panel, snapshot)
+            panel.setFrame(screen.frame, display: true)
+            panel.orderFrontRegardless()
+            self.overviewPanel = panel
+        }
+    }
+
+    /// (Re)build the overview's SwiftUI content for the given snapshot.
+    private func renderOverview(into panel: NSPanel, _ snapshot: OverlaySnapshot) {
+        let hosting = NSHostingView(rootView: AnyView(
+            OverviewView(
+                items: snapshot.rail,
+                onCenter: { [weak self] id in self?.onCenter?(id) },
+                onClose: { [weak self] in self?.toggleOverview() }
+            )
+        ))
+        panel.contentView = hosting
     }
 
     // MARK: - Panel plumbing
