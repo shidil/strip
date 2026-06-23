@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    *{box-sizing:border-box;}
+    html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;}
+  </style>
+</helmet>
+<div style="position:fixed;inset:0;background:#000;font-family:-apple-system,system-ui,'Segoe UI',sans-serif;">
+  <div id="strip-fit" style="position:absolute;inset:0;overflow:hidden;">
+    <div id="strip-stage" style="{{ stageStyle }}">
+
+      <div style="position:absolute;inset:0;background:linear-gradient(150deg,#26304f 0%,#392e5b 44%,#5a3160 100%);"></div>
+      <div style="position:absolute;inset:0;background:radial-gradient(82% 60% at 72% 16%,rgba(120,150,255,.30),transparent 60%),radial-gradient(72% 60% at 18% 96%,rgba(255,120,165,.18),transparent 60%);"></div>
+
+      <div style="position:absolute;top:0;left:0;right:0;height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;background:rgba(17,17,23,.5);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,.06);font-size:13px;color:#eaeaf0;z-index:500;">
+        <div style="display:flex;align-items:center;gap:18px;">
+          <div style="width:13px;height:13px;border-radius:3.5px;background:linear-gradient(135deg,#fff,#b9c0ff);"></div>
+          <span style="font-weight:700;">{{ activeApp }}</span>
+          <span style="opacity:.65;">File</span><span style="opacity:.65;">Edit</span><span style="opacity:.65;">View</span><span style="opacity:.65;">Window</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <span style="opacity:.85;">{{ layoutLabel }}</span>
+          <span style="opacity:.4;">&middot;</span>
+          <span style="opacity:.85;">{{ modeLabel }}</span>
+          <span style="opacity:.4;">&middot;</span>
+          <span style="opacity:.85;">{{ transLabel }}</span>
+          <span style="opacity:.35;">|</span>
+          <span style="font-variant-numeric:tabular-nums;opacity:.95;">{{ clock }}</span>
+        </div>
+      </div>
+
+      <div style="position:absolute;inset:0;perspective:2000px;z-index:100;">
+        <sc-for list="{{ windows }}" as="w" hint-placeholder-count="3">
+          <div style="{{ w.box }}" onClick="{{ w.onClick }}">
+            <dc-import name="StripWindow" app="{{ w.app }}" title="{{ w.title }}" accent="{{ w.accent }}" active="{{ w.active }}" style="display:block;width:100%;height:100%" hint-size="100%,100%"></dc-import>
+            <sc-if value="{{ w.pinned }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:#1b1b1e;border:1px solid rgba(255,255,255,.18);color:#ffd479;font-size:10.5px;letter-spacing:.05em;padding:3px 10px;border-radius:20px;display:flex;align-items:center;gap:6px;z-index:6;box-shadow:0 6px 16px rgba(0,0,0,.4);"><span style="width:6px;height:6px;border-radius:50%;background:#ffd479;"></span>PINNED</div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:9px 13px;background:rgba(17,17,23,.6);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);border:1px solid rgba(255,255,255,.09);border-radius:17px;z-index:400;box-shadow:0 14px 36px rgba(0,0,0,.42);">
+        <span style="font-size:10px;letter-spacing:.12em;color:#7a7a86;text-transform:uppercase;margin-right:3px;">Film</span>
+        <sc-for list="{{ rail }}" as="r" hint-placeholder-count="7">
+          <div onClick="{{ r.onClick }}" style="position:relative;width:44px;height:31px;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;background:{{ r.accent }};opacity:{{ r.dim }};outline:{{ r.outline }};outline-offset:1px;transition:opacity .25s,outline .2s;">
+            {{ r.letter }}
+            <sc-if value="{{ r.pinned }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:#ffd479;border:2px solid #15151a;"></span></sc-if>
+          </div>
+        </sc-for>
+      </div>
+
+      <div onClick="{{ toggleHelp }}" style="position:absolute;bottom:18px;left:18px;display:flex;align-items:center;gap:8px;padding:8px 13px;background:rgba(17,17,23,.55);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.09);border-radius:12px;color:#cfcfd8;font-size:12.5px;cursor:pointer;z-index:400;">
+        <span style="font-family:ui-monospace,Menlo,monospace;background:rgba(255,255,255,.12);padding:1px 7px;border-radius:5px;">?</span> Shortcuts
+      </div>
+
+      <sc-if value="{{ hint }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;bottom:64px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:14px;padding:12px 17px;background:rgba(20,20,27,.85);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);border:1px solid rgba(255,255,255,.11);border-radius:14px;color:#e8e8ee;font-size:13.5px;z-index:600;box-shadow:0 18px 44px rgba(0,0,0,.5);">
+          <span><b style="font-family:ui-monospace,Menlo,monospace;color:#fff;">H</b> / <b style="font-family:ui-monospace,Menlo,monospace;color:#fff;">L</b> slide the film</span>
+          <span style="opacity:.35;">&middot;</span>
+          <span><b style="font-family:ui-monospace,Menlo,monospace;color:#fff;">Space</b> overview</span>
+          <span style="opacity:.35;">&middot;</span>
+          <span><b style="font-family:ui-monospace,Menlo,monospace;color:#fff;">?</b> all keys</span>
+          <span onClick="{{ closeHint }}" style="margin-left:2px;cursor:pointer;opacity:.55;font-size:17px;line-height:1;">&times;</span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ help }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ closeOverlays }}" style="position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);z-index:800;display:flex;align-items:center;justify-content:center;">
+          <div style="width:600px;max-width:90%;background:rgba(25,25,31,.97);border:1px solid rgba(255,255,255,.1);border-radius:19px;padding:28px 32px;color:#e8e8ee;box-shadow:0 36px 90px rgba(0,0,0,.65);">
+            <div style="font-size:19px;font-weight:700;margin-bottom:3px;">Keyboard</div>
+            <div style="font-size:13px;color:#9a9aa2;margin-bottom:20px;">Vim-style, like Niri. In a real config these sit behind your Mod key.</div>
+            <div style="display:flex;flex-direction:column;gap:13px;font-size:13.5px;">
+              <sc-for list="{{ helpRows }}" as="row" hint-placeholder-count="9">
+                <div style="display:flex;align-items:center;gap:14px;">
+                  <div style="flex:none;width:118px;display:flex;gap:6px;">
+                    <sc-for list="{{ row.keys }}" as="kk" hint-placeholder-count="2">
+                      <span style="font-family:ui-monospace,Menlo,monospace;font-size:12px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.13);border-bottom-width:2px;padding:2px 8px;border-radius:6px;color:#fff;">{{ kk }}</span>
+                    </sc-for>
+                  </div>
+                  <div style="color:#c7c7d0;">{{ row.label }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ overview }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ closeOverlays }}" style="position:absolute;inset:0;background:rgba(8,8,12,.68);backdrop-filter:blur(13px);-webkit-backdrop-filter:blur(13px);z-index:700;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:64px;">
+          <div style="font-size:14px;color:#b9b9c4;margin-bottom:28px;letter-spacing:.02em;">Overview &middot; click a window to bring it to center &middot; <b style="color:#fff;">Space</b> to close</div>
+          <div style="display:flex;flex-wrap:wrap;gap:24px;justify-content:center;align-items:center;max-width:1180px;">
+            <sc-for list="{{ overviewWindows }}" as="o" hint-placeholder-count="7">
+              <div onClick="{{ o.onClick }}" style="display:grid;width:304px;height:190px;border-radius:13px;overflow:hidden;cursor:pointer;position:relative;box-shadow:{{ o.shadow }};transition:transform .18s ease;" style-hover="transform:translateY(-5px)">
+                <dc-import name="StripWindow" app="{{ o.app }}" title="{{ o.title }}" accent="{{ o.accent }}" active="{{ o.active }}" style="display:block;width:100%;height:100%" hint-size="304px,190px"></dc-import>
+                <sc-if value="{{ o.pinned }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;top:9px;right:9px;background:#1b1b1e;color:#ffd479;font-size:10px;letter-spacing:.05em;padding:3px 8px;border-radius:11px;z-index:4;">PINNED</div></sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    ring: ['editor', 'terminal', 'browser', 'chat', 'mail', 'music', 'calendar'],
+    centerId: 'browser',
+    cols: 3,
+    emphasis: 'focus',
+    transition: 'track',
+    pins: {},
+    focusSlot: 'C',
+    overview: false,
+    help: false,
+    hint: true,
+    scale: 1,
+  };
+
+  accents = { editor: '#7aa2f7', terminal: '#41d18f', browser: '#5b9dff', chat: '#b58cf2', mail: '#f0a35e', music: '#ff7a90', calendar: '#5fc9a0' };
+  appName = { editor: 'Editor', terminal: 'Terminal', browser: 'Browser', chat: 'Messages', mail: 'Mail', music: 'Music', calendar: 'Calendar' };
+  titles = { editor: 'layout.rs — strip-wm', terminal: 'zsh — niri-strip', browser: 'Strip Docs', chat: '#wm-design', mail: 'Inbox — Mail', music: 'Now Playing', calendar: 'June 2026' };
+  letters = { editor: 'E', terminal: 'T', browser: 'B', chat: 'C', mail: '@', music: '\u266A', calendar: '#' };
+
+  componentDidMount() {
+    this._onKey = this.onKey.bind(this);
+    window.addEventListener('keydown', this._onKey);
+    this._fit = () => this.fit();
+    window.addEventListener('resize', this._fit);
+    requestAnimationFrame(this._fit);
+    try {
+      this._ro = new ResizeObserver(this._fit);
+      const el = document.getElementById('strip-fit');
+      if (el) this._ro.observe(el);
+    } catch (e) {}
+  }
+  componentWillUnmount() {
+    window.removeEventListener('keydown', this._onKey);
+    window.removeEventListener('resize', this._fit);
+    if (this._ro) this._ro.disconnect();
+  }
+
+  fit() {
+    const el = document.getElementById('strip-fit');
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const s = Math.min(r.width / 1440, r.height / 900);
+    if (s && Math.abs(s - this.state.scale) > 0.001) this.setState({ scale: s });
+  }
+
+  slotKeysFor(c) { return c === 1 ? ['C'] : c === 2 ? ['L', 'R'] : ['L', 'C', 'R']; }
+  primaryFor(c) { return c === 2 ? 'L' : 'C'; }
+
+  geom() {
+    const c = this.state.cols, e = this.state.emphasis, fs = this.state.focusSlot;
+    const B = {};
+    if (c === 1) { B.C = { cx: 720, w: 1000, h: 724 }; }
+    else if (c === 3) {
+      if (e === 'focus') { B.L = { cx: 190, w: 300, h: 556 }; B.C = { cx: 720, w: 716, h: 690 }; B.R = { cx: 1250, w: 300, h: 556 }; }
+      else { B.L = { cx: 282, w: 420, h: 636 }; B.C = { cx: 720, w: 420, h: 636 }; B.R = { cx: 1158, w: 420, h: 636 }; }
+    } else {
+      if (e === 'focus') {
+        if (fs === 'R') { B.L = { cx: 328, w: 380, h: 560 }; B.R = { cx: 922, w: 760, h: 690 }; }
+        else { B.L = { cx: 518, w: 760, h: 690 }; B.R = { cx: 1112, w: 380, h: 560 }; }
+      } else { B.L = { cx: 398, w: 620, h: 666 }; B.R = { cx: 1042, w: 620, h: 666 }; }
+    }
+    return B;
+  }
+
+  resolve() {
+    const cols = this.state.cols;
+    const slots = this.slotKeysFor(cols);
+    const pins = this.state.pins;
+    const pinnedIds = Object.values(pins);
+    const pinnedSet = new Set(pinnedIds);
+    const unpinned = this.state.ring.filter(id => !pinnedSet.has(id));
+    const m = unpinned.length || 1;
+    const unpinnedSlots = slots.filter(s => !pins[s]);
+    let anchorSlot = this.primaryFor(cols);
+    if (!unpinnedSlots.includes(anchorSlot)) anchorSlot = unpinnedSlots[0] || anchorSlot;
+    const anchorIdx = Math.max(0, unpinnedSlots.indexOf(anchorSlot));
+    let focusSlot = this.state.focusSlot;
+    if (!unpinnedSlots.includes(focusSlot)) focusSlot = anchorSlot;
+    let centerId = this.state.centerId;
+    if (!unpinned.includes(centerId)) centerId = unpinned[0];
+    const centerPos = Math.max(0, unpinned.indexOf(centerId));
+    const assign = {};
+    slots.forEach(s => { if (pins[s]) assign[s] = pins[s]; });
+    unpinnedSlots.forEach((s, k) => { assign[s] = unpinned[(((centerPos + (k - anchorIdx)) % m) + m) % m]; });
+    return { cols, slots, pins, pinnedSet, unpinned, m, unpinnedSlots, anchorIdx, focusSlot, centerId, centerPos, assign };
+  }
+
+  computeVM() {
+    const R = this.resolve();
+    const B = this.geom();
+    const slotIndex = s => R.slots.indexOf(s);
+    const focusSlotIndex = slotIndex(R.focusSlot);
+    const activeId = R.assign[R.focusSlot];
+    const baseX = 720, baseY = 454;
+    const mode = this.state.transition;
+
+    const views = this.state.ring.map((id) => {
+      const pinnedSlot = Object.keys(R.pins).find(s => R.pins[s] === id) || null;
+      let cx, w, h, inSlot = null, parked = false, opacity = 1, sd = 0;
+      if (pinnedSlot) {
+        const g = B[pinnedSlot]; cx = g.cx; w = g.w; h = g.h; inSlot = pinnedSlot; sd = slotIndex(pinnedSlot) - focusSlotIndex;
+      } else {
+        const up = R.unpinned.indexOf(id);
+        let d = (((up - R.centerPos) % R.m) + R.m) % R.m; if (d > R.m / 2) d -= R.m;
+        const t = R.anchorIdx + d;
+        if (t >= 0 && t < R.unpinnedSlots.length) {
+          const sk = R.unpinnedSlots[t]; const g = B[sk]; cx = g.cx; w = g.w; h = g.h; inSlot = sk; sd = slotIndex(sk) - focusSlotIndex;
+        } else {
+          parked = true;
+          const dir = t < 0 ? -1 : 1;
+          const steps = t < 0 ? (-t) : (t - (R.unpinnedSlots.length - 1));
+          const ek = t < 0 ? R.unpinnedSlots[0] : R.unpinnedSlots[R.unpinnedSlots.length - 1];
+          const g = B[ek]; w = 206; h = 440;
+          cx = g.cx + dir * (g.w / 2 + 74 + (steps - 1) * 120);
+          opacity = steps === 1 ? 0.5 : steps === 2 ? 0.2 : 0.07;
+          sd = dir * (Math.abs(slotIndex(ek) - focusSlotIndex) + steps);
+        }
+      }
+      const active = inSlot === R.focusSlot;
+      const dx = cx - baseX;
+      let tf, tr, z;
+      if (mode === 'carousel') {
+        const side = dx < 0 ? -1 : dx > 0 ? 1 : 0;
+        const rot = -side * Math.min(Math.abs(sd), 3) * 15;
+        const tz = active ? 40 : -Math.abs(sd) * 70;
+        const sc = active ? 1.02 : parked ? 0.78 : 0.9;
+        tf = `translate(-50%,-50%) translateX(${dx}px) rotateY(${rot}deg) translateZ(${tz}px) scale(${sc})`;
+        tr = 'transform .55s cubic-bezier(.34,1.2,.5,1), opacity .5s ease, box-shadow .3s';
+        z = parked ? 1 : 30 - Math.abs(sd);
+      } else if (mode === 'pop') {
+        const sc = active ? 1 : parked ? 0.8 : 0.9;
+        tf = `translate(-50%,-50%) translateX(${dx}px) scale(${sc})`;
+        tr = 'transform .42s cubic-bezier(.18,1.5,.32,1), opacity .42s ease, box-shadow .3s';
+        z = parked ? 1 : 20 - Math.abs(sd);
+      } else if (mode === 'fade') {
+        const sc = active ? 1 : 0.97;
+        tf = `translate(-50%,-50%) translateX(${dx}px) scale(${sc})`;
+        if (!parked && !active) opacity = 0.55; if (parked) opacity *= 0.7;
+        tr = 'opacity .5s ease, transform .5s ease, box-shadow .3s';
+        z = parked ? 1 : 20 - Math.abs(sd);
+      } else {
+        tf = `translate(-50%,-50%) translateX(${dx}px)`;
+        tr = 'transform .46s cubic-bezier(.4,.82,.32,1), width .46s ease, height .46s ease, opacity .46s ease, box-shadow .3s';
+        z = parked ? 1 : 20 - Math.abs(sd);
+      }
+      if (pinnedSlot) { opacity = 1; z = Math.max(z, 15); }
+      const shadow = active ? ('0 0 0 2.5px ' + this.accents[id] + ', 0 30px 72px rgba(0,0,0,.62)') : pinnedSlot ? ('0 0 0 1.5px rgba(255,212,121,.5), 0 24px 60px rgba(0,0,0,.55)') : '0 22px 56px rgba(0,0,0,.5)';
+      const box = `position:absolute;display:grid;left:${baseX}px;top:${baseY}px;width:${w}px;height:${h}px;transform:${tf};transition:${tr};opacity:${opacity};z-index:${z};transform-origin:center center;will-change:transform,opacity;border-radius:13px;box-shadow:${shadow};cursor:pointer;`;
+      return { id, app: id, title: this.titles[id], accent: this.accents[id], active, pinned: !!pinnedSlot, box, onClick: () => this.setCenter(id) };
+    });
+
+    const assignedIds = new Set(Object.values(R.assign));
+    const rail = this.state.ring.map(id => {
+      const assigned = assignedIds.has(id);
+      const active = id === activeId;
+      const pinned = R.pinnedSet.has(id);
+      return {
+        id, letter: this.letters[id], accent: this.accents[id],
+        dim: assigned ? 1 : 0.4,
+        outline: active ? '2.5px solid #ffffff' : assigned ? '2px solid rgba(255,255,255,.5)' : '2px solid transparent',
+        pinned, onClick: () => this.setCenter(id),
+      };
+    });
+
+    const overviewWindows = this.state.ring.map((id) => {
+      const active = id === activeId;
+      return {
+        id, app: id, title: this.titles[id], accent: this.accents[id], active, pinned: R.pinnedSet.has(id),
+        shadow: active ? ('0 0 0 3px ' + this.accents[id] + ', 0 26px 64px rgba(0,0,0,.6)') : '0 16px 44px rgba(0,0,0,.5)',
+        onClick: () => { this.setCenter(id); this.setState({ overview: false }); },
+      };
+    });
+
+    const pc = Object.keys(R.pins).length;
+    const modeLabel = pc === 0 ? 'Strip shift' : (pc >= R.slots.length ? 'Independent' : 'Hybrid');
+    const transLabel = { track: 'Film slide', carousel: 'Carousel', pop: 'Pop', fade: 'Dissolve' }[mode];
+    const layoutLabel = (R.cols === 1 ? 'Monocle' : R.cols + '\u2011up') + (R.cols > 1 ? ' \u00b7 ' + (this.state.emphasis === 'focus' ? 'focus' : 'equal') : '');
+
+    return {
+      views, rail, overviewWindows, activeApp: this.appName[activeId],
+      modeLabel, transLabel, layoutLabel,
+      stageStyle: `position:absolute;left:50%;top:50%;width:1440px;height:900px;transform:translate(-50%,-50%) scale(${this.state.scale});`,
+    };
+  }
+
+  renderVals() {
+    const vm = this.computeVM();
+    return {
+      windows: vm.views, rail: vm.rail, overviewWindows: vm.overviewWindows,
+      activeApp: vm.activeApp, modeLabel: vm.modeLabel, transLabel: vm.transLabel, layoutLabel: vm.layoutLabel,
+      stageStyle: vm.stageStyle,
+      overview: this.state.overview, help: this.state.help, hint: this.state.hint,
+      clock: '9:41',
+      helpRows: [
+        { keys: ['H', 'L'], label: 'Slide the film — bring the prev / next window to center' },
+        { keys: ['\u21e7H', '\u21e7L'], label: 'Carry the focused window along the strip (reorder)' },
+        { keys: ['Tab', 'j/k'], label: 'Move focus between slots' },
+        { keys: ['P'], label: 'Pin / unpin the focused slot — it stays as others flow' },
+        { keys: ['1', '2', '3'], label: 'Monocle / 2-up / 3-up layout' },
+        { keys: ['E'], label: 'Toggle focus vs equal column widths' },
+        { keys: ['T'], label: 'Cycle the film-feel animation' },
+        { keys: ['Space'], label: 'Overview of every window' },
+        { keys: ['?'], label: 'Toggle this panel' },
+      ],
+      closeHint: () => this.setState({ hint: false }),
+      toggleHelp: () => this.setState({ help: !this.state.help, hint: false }),
+      closeOverlays: () => this.setState({ overview: false, help: false }),
+    };
+  }
+
+  setCenter(id) {
+    const pins = this.state.pins;
+    let np = pins;
+    const ps = Object.keys(pins).find(s => pins[s] === id);
+    if (ps) { np = { ...pins }; delete np[ps]; }
+    this.setState({ pins: np, centerId: id, focusSlot: this.primaryFor(this.state.cols), hint: false });
+  }
+  rotate(dir) {
+    const pinnedSet = new Set(Object.values(this.state.pins));
+    const up = this.state.ring.filter(id => !pinnedSet.has(id));
+    const m = up.length; if (!m) return;
+    let pos = up.indexOf(this.state.centerId); if (pos < 0) pos = 0;
+    this.setState({ centerId: up[(((pos + dir) % m) + m) % m], hint: false });
+  }
+  moveWindow(dir) {
+    const ring = [...this.state.ring];
+    const i = ring.indexOf(this.state.centerId); if (i < 0) return;
+    const j = (((i + dir) % ring.length) + ring.length) % ring.length;
+    const t = ring[i]; ring[i] = ring[j]; ring[j] = t;
+    this.setState({ ring, hint: false });
+  }
+  focusMove(dir) {
+    const slots = this.slotKeysFor(this.state.cols);
+    const up = slots.filter(s => !this.state.pins[s]);
+    let i = up.indexOf(this.state.focusSlot); if (i < 0) i = 0;
+    const ni = Math.max(0, Math.min(up.length - 1, i + dir));
+    this.setState({ focusSlot: up[ni], hint: false });
+  }
+  togglePin() {
+    const fs = this.state.focusSlot;
+    const pins = { ...this.state.pins };
+    if (pins[fs]) { delete pins[fs]; this.setState({ pins, hint: false }); return; }
+    const R = this.resolve();
+    const id = R.assign[fs];
+    if (!id) return;
+    pins[fs] = id;
+    const slots = this.slotKeysFor(this.state.cols);
+    const up = slots.filter(s => !pins[s]);
+    const prim = this.primaryFor(this.state.cols);
+    const nf = up.includes(prim) ? prim : (up[0] || fs);
+    let centerId = this.state.centerId;
+    const pinnedSet = new Set(Object.values(pins));
+    if (pinnedSet.has(centerId)) {
+      const upIds = this.state.ring.filter(x => !pinnedSet.has(x));
+      centerId = upIds[0] || centerId;
+    }
+    this.setState({ pins, focusSlot: nf, centerId, hint: false });
+  }
+  setCols(n) {
+    const keys = this.slotKeysFor(n);
+    const pins = {};
+    Object.keys(this.state.pins).forEach(s => { if (keys.includes(s)) pins[s] = this.state.pins[s]; });
+    let fs = this.state.focusSlot;
+    if (!keys.includes(fs)) fs = this.primaryFor(n);
+    this.setState({ cols: n, pins, focusSlot: fs, hint: false });
+  }
+  toggleEmph() { this.setState({ emphasis: this.state.emphasis === 'focus' ? 'equal' : 'focus', hint: false }); }
+  cycleTransition() {
+    const o = ['track', 'carousel', 'pop', 'fade'];
+    const i = o.indexOf(this.state.transition);
+    this.setState({ transition: o[(i + 1) % o.length], hint: false });
+  }
+
+  onKey(e) {
+    const k = e.key;
+    if (this.state.overview) {
+      if (k === 'Escape' || k === ' ' || k === 'Enter') { e.preventDefault(); this.setState({ overview: false }); }
+      else if (k === 'h' || k === 'ArrowLeft') { e.preventDefault(); this.rotate(-1); }
+      else if (k === 'l' || k === 'ArrowRight') { e.preventDefault(); this.rotate(1); }
+      return;
+    }
+    if (this.state.help && k === 'Escape') { this.setState({ help: false }); return; }
+    switch (k) {
+      case 'h': case 'ArrowLeft': e.preventDefault(); this.rotate(-1); break;
+      case 'l': case 'ArrowRight': e.preventDefault(); this.rotate(1); break;
+      case 'H': e.preventDefault(); this.moveWindow(-1); break;
+      case 'L': e.preventDefault(); this.moveWindow(1); break;
+      case 'Tab': e.preventDefault(); this.focusMove(e.shiftKey ? -1 : 1); break;
+      case 'j': e.preventDefault(); this.focusMove(-1); break;
+      case 'k': e.preventDefault(); this.focusMove(1); break;
+      case 'p': case 'P': e.preventDefault(); this.togglePin(); break;
+      case '1': e.preventDefault(); this.setCols(1); break;
+      case '2': e.preventDefault(); this.setCols(2); break;
+      case '3': e.preventDefault(); this.setCols(3); break;
+      case 'e': case 'E': e.preventDefault(); this.toggleEmph(); break;
+      case 't': case 'T': e.preventDefault(); this.cycleTransition(); break;
+      case ' ': e.preventDefault(); this.setState({ overview: !this.state.overview, hint: false }); break;
+      case '?': case '/': e.preventDefault(); this.setState({ help: !this.state.help, hint: false }); break;
+      case 'Escape': e.preventDefault(); this.setState({ help: false, overview: false }); break;
+      default: return;
+    }
+  }
+}
+</script>
+</body>
+</html>
