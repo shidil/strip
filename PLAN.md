@@ -110,7 +110,7 @@ make run             # bundle + run inner binary (NOT trusted from shell; build-
 | ⌃⌥1 / 2 / 3 | monocle / 2-up / 3-up | ✅ |
 | ⌃⌥E | focus ↔ equal emphasis | ✅ |
 | ⌃⌥T | cycle spring feel (Track/Pop/Glide) | ✅ |
-| ⌃⌥P | pin/unpin focused slot | ⬜ M3 |
+| ⌃⌥P | pin/unpin focused slot | ✅ |
 | ⌃⌥Space | overview | ⬜ M5 |
 | ⌃⌥/ | help | ⬜ M4 |
 
@@ -139,8 +139,11 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Q
 - [x] **M2 — Smooth motion + hotkeys.** Display-link spring, off-main AX writes, EnhancedUI-off,
       ⌃⌥ hotkey tap. ✅ user-confirmed "works well, smooth". Fixed: re-scan dropping parked windows;
       restart stranding off-screen windows (orphan reclaim).
-- [ ] **M3 — Pinning.** ⌃⌥P pin/unpin (port `togglePin`, prototype lines 355-374). Layouts/emphasis
-      already done. See HANDOFF.md.
+- [x] **M3 — Pinning.** ⌃⌥P pin/unpin focused slot. `togglePin()` ported as a *pure* mutating method
+      on `StripState` (so the state transition is unit-tested without AppKit); `StripController.togglePin()`
+      mutates + `apply()`; bound in `AppDelegate.handle` + a "Pin / unpin focused slot" status-menu item;
+      `apply()` log line now lists pinned slots. 5 new `StripStateTests` (pin holds slot, focus leaves
+      pinned slot, pinning center re-seats center, unpin restores flow, empty-slot no-op). ✅
 - [ ] **M4 — Overlay chrome** (first visual milestone; makes Strip look like the prototype).
       SwiftUI views hosted in **borderless, non-activating `NSWindow`/`NSPanel`** at a high window
       level (`.statusBar`+), click-through except interactive bits. Live in `Sources/StripKit/Overlay/`.

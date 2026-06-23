@@ -40,7 +40,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         case .cols(let n): controller.setCols(n)
         case .toggleEmphasis: controller.toggleEmphasis()
         case .cycleTransition: controller.cycleSpring()
-        case .togglePin, .toggleOverview, .toggleHelp:
+        case .togglePin: controller.togglePin()
+        case .toggleOverview, .toggleHelp:
             Log.line("command \(command) — coming in a later milestone")
         }
     }
@@ -79,6 +80,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         add(menu, "Slide film ◀ (prev)", #selector(slidePrev), "[")
         add(menu, "Slide film ▶ (next)", #selector(slideNext), "]")
+        add(menu, "Pin / unpin focused slot", #selector(togglePin), "p")
 
         menu.addItem(.separator())
         add(menu, "Quit Strip", #selector(quit), "q")
@@ -102,6 +104,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func setEqualEmphasis() { controller.setEmphasis(.equal) }
     @objc private func slidePrev() { controller.rotate(-1) }
     @objc private func slideNext() { controller.rotate(1) }
+    @objc private func togglePin() { controller.togglePin() }
     @objc private func quit() { NSApp.terminate(nil) }
 
     // MARK: - Permission flow

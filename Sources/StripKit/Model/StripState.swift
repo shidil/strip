@@ -49,6 +49,41 @@ public struct StripState {
     public var primarySlot: Slot {
         cols == 2 ? .L : .C
     }
+
+    // MARK: - Mutations
+
+    /// Pin or unpin the focused slot. Pinning fixes whatever window currently occupies the focused
+    /// slot so it stays put while the rest of the ring flows past; unpinning lets it flow again.
+    /// If the centered window itself gets pinned, the center moves to the first still-unpinned
+    /// window, and focus moves off any now-pinned slot. Faithful port of the prototype's
+    /// `togglePin` (`Strip Window Manager.dc.html`, lines 355-374).
+    ///
+    /// Pure (mutates only `self`) so the state transition is unit-testable without AppKit/AX.
+    public mutating func togglePin() {
+        let fs = focusSlot
+        if pins[fs] != nil {
+            pins[fs] = nil                       // unpin
+            clampToValidSlots()
+            return
+        }
+        guard let id = StripLayout(self).assignment()[fs] else { return } // empty slot → nothing to pin
+        pins[fs] = id                            // pin the window currently in the focused slot
+        let up = slots.filter { pins[$0] == nil }
+        focusSlot = up.contains(primarySlot) ? primarySlot : (up.first ?? fs)
+        let pinned = Set(pins.values)
+        if let c = centerId, pinned.contains(c) {                         // center got pinned →
+            centerId = ring.first { !pinned.contains($0) } ?? c           // hand center to first unpinned
+        }
+        clampToValidSlots()
+    }
+
+    /// Drop pins on slots that don't exist for the current column count and clamp focus to a valid
+    /// slot. A safety net after mutations that could leave stale slot keys behind.
+    mutating func clampToValidSlots() {
+        let keys = slots
+        pins = pins.filter { keys.contains($0.key) }
+        if !keys.contains(focusSlot) { focusSlot = primarySlot }
+    }
 }
 
 /// Positive modulo (Swift's `%` keeps the sign of the dividend; the prototype relies on JS's

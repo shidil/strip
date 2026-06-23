@@ -122,6 +122,14 @@ public final class StripController {
         apply()
     }
 
+    /// Pin/unpin the focused slot (⌃⌥P). The engine already honors `state.pins`; the state mutation
+    /// lives in `StripState.togglePin()` — here we just re-apply so pinned windows hold while the
+    /// rest of the film flows.
+    public func togglePin() {
+        state.togglePin()
+        apply()
+    }
+
     // MARK: - Apply to real windows
 
     /// Compute placements and move every managed window to its target frame — springing smoothly
@@ -154,8 +162,7 @@ public final class StripController {
     // MARK: - Helpers
 
     private func normalize() {
-        if !state.slots.contains(state.focusSlot) { state.focusSlot = state.primarySlot }
-        state.pins = state.pins.filter { state.slots.contains($0.key) }
+        state.clampToValidSlots()
     }
 
     private func activeScreen() -> NSScreen {
@@ -168,7 +175,12 @@ public final class StripController {
 
     private func logState(_ placements: [WindowPlacement]) {
         let layout = state.cols == 1 ? "monocle" : "\(state.cols)-up · \(state.emphasis == .focus ? "focus" : "equal")"
-        Log.line("apply: \(layout) on \(screen.localizedName) — \(placements.filter { !$0.parked }.count) slotted, \(placements.filter { $0.parked }.count) parked")
+        let pins = state.pins.isEmpty
+            ? ""
+            : " — pinned " + state.pins.sorted { $0.key.rawValue < $1.key.rawValue }
+                .map { "\($0.key.rawValue):\(windowsById[$0.value]?.appName ?? "?")" }
+                .joined(separator: ",")
+        Log.line("apply: \(layout) on \(screen.localizedName) — \(placements.filter { !$0.parked }.count) slotted, \(placements.filter { $0.parked }.count) parked\(pins)")
         for p in placements {
             let name = windowsById[p.id]?.appName ?? "?"
             let where_ = p.parked ? "PARKED" : (p.slot.map { $0.rawValue } ?? "?")
