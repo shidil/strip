@@ -58,10 +58,22 @@ public struct AXWindow {
         AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value)
     }
 
-    /// Bring this window to the front and make it the focused/main window of its app.
+    /// Bring this window to the front of its app's window stack (z-order only — does not move
+    /// keyboard focus to the app).
     public func raise() {
         AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
         AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+    }
+
+    /// Give this window real keyboard focus: mark it the app's main + focused window, raise it, and
+    /// **activate the owning application** so keystrokes are delivered to it. Raising alone only
+    /// reorders windows within an app; without activating the app the previously-frontmost app keeps
+    /// the keyboard. (Standard no-SIP AX focus path, à la Amethyst/yabai.)
+    public func focus() {
+        AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+        NSRunningApplication(processIdentifier: pid)?.activate()
     }
 
     // MARK: - Low-level attribute helpers

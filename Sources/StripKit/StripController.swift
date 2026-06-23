@@ -9,13 +9,23 @@ public final class StripController {
     public private(set) var state: StripState
     private var windowsById: [CGWindowID: ManagedWindow] = [:]
     private var screen: NSScreen
+    /// The window we last handed keyboard focus to — so `apply()` only re-focuses on a real change.
+    private var lastFocusedId: CGWindowID?
 
     /// When true (M2+), frame changes spring smoothly; when false, they snap instantly.
     public var animated = true
 
+    /// Emitted after every `apply()` so the overlay chrome (M4 film rail, etc.) can re-render.
+    public var onRender: ((OverlaySnapshot) -> Void)?
+
+    /// Emitted with the focused window's live frame (Quartz global) so the overlay can track it with
+    /// a focus ring as it animates; `nil` hides the ring.
+    public var onFocusFrame: ((CGRect?) -> Void)?
+
     public init() {
         self.state = StripState(cols: 3, emphasis: .focus, focusSlot: .C)
         self.screen = NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
+        animator.onFocusFrame = { [weak self] frame in self?.onFocusFrame?(frame) }
     }
 
     public var managedCount: Int { state.ring.count }
@@ -130,6 +140,12 @@ public final class StripController {
         apply()
     }
 
+    /// Bring a specific window to center (film-rail chip click; `StripState.setCenter`).
+    public func setCenter(_ id: CGWindowID) {
+        state.setCenter(id)
+        apply()
+    }
+
     // MARK: - Apply to real windows
 
     /// Compute placements and move every managed window to its target frame — springing smoothly
@@ -143,16 +159,55 @@ public final class StripController {
         let targets: [(ax: AXWindow, frame: CGRect)] = placements.compactMap { p in
             windowsById[p.id].map { (ax: $0.ax, frame: p.frame) }
         }
+        animator.focusedID = layout.activeId // ring tracks the focused window
         if animated {
             animator.animate(targets, on: screen)
         } else {
             animator.snap(targets)
         }
-        if let activeId = layout.activeId, let w = windowsById[activeId] {
-            w.ax.raise()
+        // Move real keyboard focus to the focused-slot window, but only when it actually changes —
+        // so re-applies that don't change focus (spring cycle, re-tile) don't yank the keyboard around.
+        if let activeId = layout.activeId, let w = windowsById[activeId], activeId != lastFocusedId {
+            w.ax.focus()
+            lastFocusedId = activeId
         }
         logState(placements)
+        onRender?(railSnapshot(layout))
     }
+
+    /// Build the overlay snapshot from the current state + layout (mirrors prototype `rail` +
+    /// the status-bar labels, lines 269-293).
+    private func railSnapshot(_ layout: StripLayout) -> OverlaySnapshot {
+        let assigned = Set(layout.assignment().values)
+        let activeId = layout.activeId
+        let pinned = Set(state.pins.values)
+        let items = state.ring.compactMap { id -> RailItem? in
+            guard let w = windowsById[id] else { return nil }
+            return RailItem(id: id, letter: w.letter, accent: w.accent,
+                            assigned: assigned.contains(id), active: id == activeId,
+                            pinned: pinned.contains(id))
+        }
+
+        let activeApp = activeId.flatMap { windowsById[$0]?.appName } ?? "—"
+        let activeAccent = activeId.flatMap { windowsById[$0]?.accent }
+        let layoutLabel = state.cols == 1
+            ? "Monocle"
+            : "\(state.cols)‑up · \(state.emphasis == .focus ? "focus" : "equal")"
+        let pc = state.pins.count
+        let modeLabel = pc == 0 ? "Strip shift" : (pc >= state.slots.count ? "Independent" : "Hybrid")
+
+        return OverlaySnapshot(rail: items, screen: screen, activeApp: activeApp,
+                               activeAccent: activeAccent, layoutLabel: layoutLabel,
+                               modeLabel: modeLabel, transLabel: animator.config.name,
+                               clock: Self.clock())
+    }
+
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm"
+        return f
+    }()
+    private static func clock() -> String { clockFormatter.string(from: Date()) }
 
     public func refreshAndApply() {
         refresh()

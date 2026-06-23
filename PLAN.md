@@ -112,7 +112,7 @@ make run             # bundle + run inner binary (NOT trusted from shell; build-
 | ⌃⌥T | cycle spring feel (Track/Pop/Glide) | ✅ |
 | ⌃⌥P | pin/unpin focused slot | ✅ |
 | ⌃⌥Space | overview | ⬜ M5 |
-| ⌃⌥/ | help | ⬜ M4 |
+| ⌃⌥/ | help overlay (keyboard cheatsheet) | ✅ |
 
 Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Quit.
 
@@ -144,20 +144,38 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Q
       mutates + `apply()`; bound in `AppDelegate.handle` + a "Pin / unpin focused slot" status-menu item;
       `apply()` log line now lists pinned slots. 5 new `StripStateTests` (pin holds slot, focus leaves
       pinned slot, pinning center re-seats center, unpin restores flow, empty-slot no-op). ✅
-- [ ] **M4 — Overlay chrome** (first visual milestone; makes Strip look like the prototype).
-      SwiftUI views hosted in **borderless, non-activating `NSWindow`/`NSPanel`** at a high window
-      level (`.statusBar`+), click-through except interactive bits. Live in `Sources/StripKit/Overlay/`.
-      Build against the controller's current `StripState`/assignment + each window's live frame.
-      - **Film rail** (bottom-center): thumbnail chips — letter (`Theme.letter`), accent
-        (`Theme.accent`), dim when not assigned, white outline when active, gold pin dot when pinned;
-        clicking a chip centers that window. Prototype lines **51-59** (+ pin dot 56).
-      - **Focus ring**: accent-colored border framing the active window's live frame (track it as it
-        animates — update from the same display-link, or observe frame changes).
-      - **Status pill**: layout · mode · transition · (clock). Prototype top bar lines **23-38**;
-        labels computed like prototype `modeLabel`/`transLabel`/`layoutLabel` (lines 290-293).
-      - **Help overlay** (⌃⌥/): static keyboard cheatsheet. Prototype lines **76-95**; rows table
-        lines **310-320**. Wire the `.toggleHelp` case in `AppDelegate.handle` (currently a stub).
-      - Pin **badge** becomes visible here (M3 only logs pins).
+- [x] **M4 — Overlay chrome** (first visual milestone; makes Strip look like the prototype). ✅
+      SwiftUI views hosted in **borderless, non-activating `NSPanel`s** at `.statusBar` level. Live in
+      `Sources/StripKit/Overlay/` (`OverlaySnapshot`, `FilmRailView`, `StatusPillView`, `HelpOverlayView`,
+      `OverlayController`). `StripController.apply()` emits `onRender(OverlaySnapshot)` + `onFocusFrame`.
+      - [x] **Film rail** (bottom-center): chips — letter (`Theme.letter`), accent (`Theme.accent`),
+        dim when not assigned, white outline when active, gold pin dot when pinned; clicking a chip
+        centers that window. Prototype lines **51-59** (+ pin dot 56). ✅ *Implemented:*
+        `Sources/StripKit/Overlay/` — `OverlaySnapshot` (RailItem model), `FilmRailView` (SwiftUI),
+        `OverlayController` (borderless `.nonactivatingPanel` at `.statusBar`, bottom-center of active
+        screen). `StripController` emits `onRender(OverlaySnapshot)` after each `apply()`; chip click
+        → `controller.setCenter(id)` (ported as pure `StripState.setCenter`, prototype 327-333).
+        ✅ user-confirmed (screenshot: rail shows active outline + gold pin dot).
+      - [x] **Focus ring**: accent-tinted border framing the focused window's live frame, tracking it
+        as it animates. ✅ *Implemented:* sourced from the existing `WindowAnimator` display-link —
+        `animator.focusedID` + `onFocusFrame` emit the focused window's `spring.current` each tick
+        (and once on animate/snap/settle), so no extra AX reads or second display-link. `OverlayController`
+        positions a click-through (`ignoresMouseEvents`) layer-bordered panel; border color = focused
+        window's accent (from snapshot `activeAccent`). ✅ user-confirmed (tracks cleanly during slides).
+      - [x] **Real keyboard focus follows the strip.** `AXWindow.focus()` (kAXMain + kAXFocused +
+        kAXRaise + `NSRunningApplication.activate()`) replaces `raise()` in `apply()`, called only when
+        the focused window changes (`lastFocusedId`). So ⌃⌥H/L · ⌃⌥J/K · rail-click route the keyboard
+        to the focused window; spring-cycle / re-tile don't disturb it. ✅ user-confirmed.
+      - [x] **Status pill** (top-center): activeApp · layout · mode · transition · clock. Prototype top
+        bar **23-38**; labels like `modeLabel`/`transLabel`/`layoutLabel` (290-293). ✅ *Implemented:*
+        `StatusPillView` (floating pill, since the real macOS menu bar owns the top edge). Snapshot
+        fields computed in `StripController.railSnapshot`; mode = pin posture (Strip shift / Hybrid /
+        Independent), transition = current spring name, clock refreshes per render. ✅ user-confirmed.
+      - [x] **Help overlay** (⌃⌥/): keyboard cheatsheet. Prototype **76-95** / rows **310-320**. ✅
+        *Implemented:* `HelpOverlayView` (dimmed full-screen modal, click/toggle to close), shown via
+        `OverlayController.toggleHelp()`; `.toggleHelp` wired in `AppDelegate.handle` + "Keyboard help…"
+        menu item. Chips show bare keys; subtitle notes the ⌃⌥ Mod chord. ✅ user-confirmed.
+      - Pin **badge** is now visible (gold dot on the rail chip). ✅
 - [ ] **M5 — Overview + polish.**
       - **Overview** (⌃⌥Space): grid of cards, one per ring window (app name + accent placeholder —
         real thumbnails need Screen Recording, deferred). Click a card to center+close. Prototype

@@ -64,6 +64,31 @@ final class StripStateTests: XCTestCase {
         XCTAssertTrue(s.pins.isEmpty)
     }
 
+    // MARK: - setCenter (rail-chip click)
+
+    func testSetCenterCentersAndResetsFocusToPrimary() {
+        var s = StripState(ring: ring, centerId: 1, cols: 3, emphasis: .focus, focusSlot: .R)
+        s.setCenter(5)
+        XCTAssertEqual(s.centerId, 5)
+        XCTAssertEqual(s.focusSlot, s.primarySlot, "focus returns to the anchor slot")
+        XCTAssertEqual(assignment(s)[.C], 5)
+    }
+
+    func testSetCenterUnpinsAPinnedTarget() {
+        // Pin window 7 in L, then center it: it should unpin and flow to the anchor.
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, pins: [.L: 7])
+        s.setCenter(7)
+        XCTAssertFalse(s.pins.values.contains(7), "centering a pinned window unpins it")
+        XCTAssertEqual(s.centerId, 7)
+        XCTAssertEqual(assignment(s)[.C], 7)
+    }
+
+    func testSetCenterIgnoresUnknownWindow() {
+        var s = StripState(ring: ring, centerId: 3, cols: 3)
+        s.setCenter(999)
+        XCTAssertEqual(s.centerId, 3, "unknown id is a no-op")
+    }
+
     // MARK: - Edge cases
 
     func testPinningAnEmptySlotIsANoOp() {

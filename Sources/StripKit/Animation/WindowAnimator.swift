@@ -28,6 +28,13 @@ public final class WindowAnimator: NSObject {
     private var lastTimestamp: CFTimeInterval = 0
     public var config: SpringConfig = .track
 
+    /// The window the focus ring should track. The animator reports its live frame so the ring can
+    /// follow it as it springs. `nil` hides the ring.
+    public var focusedID: CGWindowID?
+    /// Fired with the focused window's current frame (Quartz global) each tick, and once when motion
+    /// starts/snaps/settles. `nil` when there's no focused window to frame.
+    public var onFocusFrame: ((CGRect?) -> Void)?
+
     public override init() { super.init() }
 
     /// Set/replace the full set of windows to drive. New windows start from their live frame so
@@ -58,12 +65,19 @@ public final class WindowAnimator: NSObject {
         }
 
         ensureRunning(on: screen)
+        emitFocusFrame() // place the ring at the window's current position right away
     }
 
     /// Apply targets instantly with no animation (used when animation is disabled).
     public func snap(_ targets: [(ax: AXWindow, frame: CGRect)]) {
         for t in targets {
             EnhancedUI.suppressed(on: AXUIElementCreateApplication(t.ax.pid)) { t.ax.setFrame(t.frame) }
+        }
+        // No ticking when snapping, so report the focused window's resting frame directly.
+        if let id = focusedID, let t = targets.first(where: { $0.ax.windowIDOrNil == id }) {
+            onFocusFrame?(t.frame)
+        } else {
+            onFocusFrame?(nil)
         }
     }
 
@@ -108,7 +122,14 @@ public final class WindowAnimator: NSObject {
             write(id: id, frame: settled ? entry.target : entry.spring.current, ax: entry.ax)
         }
 
+        emitFocusFrame()
         if allSettled { stop() }
+    }
+
+    /// Report the focused window's current animated frame (or its target once settled) to `onFocusFrame`.
+    private func emitFocusFrame() {
+        guard let id = focusedID, let e = entries[id] else { onFocusFrame?(nil); return }
+        onFocusFrame?(e.spring.settled(near: e.target) ? e.target : e.spring.current)
     }
 
     /// Write a frame off the main thread on the app's serial queue, dropping overlapping writes.

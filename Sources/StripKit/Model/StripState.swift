@@ -77,6 +77,17 @@ public struct StripState {
         clampToValidSlots()
     }
 
+    /// Bring a window to the anchor (center) slot — the rail-chip click. If the window is currently
+    /// pinned, unpin it first so it can flow to the anchor; focus returns to the primary slot.
+    /// Faithful port of the prototype's `setCenter` (`Strip Window Manager.dc.html`, lines 327-333).
+    public mutating func setCenter(_ id: CGWindowID) {
+        guard ring.contains(id) else { return }
+        if let ps = pins.first(where: { $0.value == id })?.key { pins[ps] = nil }
+        centerId = id
+        focusSlot = primarySlot
+        clampToValidSlots()
+    }
+
     /// Drop pins on slots that don't exist for the current column count and clamp focus to a valid
     /// slot. A safety net after mutations that could leave stale slot keys behind.
     mutating func clampToValidSlots() {
