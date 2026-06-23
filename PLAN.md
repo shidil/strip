@@ -190,10 +190,21 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Q
         - **Centered rows, not `LazyVGrid`.** A fixed-column grid left-aligns the last partial row;
           instead the cards are chunked into rows of 3 (the prototype's natural wrap), each row a
           centered `HStack(maxWidth: .infinity)`, so a lone trailing card centers under the row above.
-        - **Plain translucent dim, not a behind-window blur.** An `NSVisualEffectView`
-          (`.behindWindow`) was tried for the prototype's `blur(13px)` but renders as an *opaque grey*
-          on a non-activating overlay panel (the "Reduce transparency" fallback), which looked worse
-          than a plain `Color(...).opacity(0.55)` see-through dim. The plain dim is the chosen look.
+        - **Behind-window blur via the window server (`CGSSetWindowBackgroundBlurRadius`).** The
+          prototype's `backdrop-filter: blur` over the windows behind is achievable and is the chosen
+          look. Two dead ends first: (1) `NSVisualEffectView(.behindWindow)` blurs but its radius is
+          *fixed and heavy* (windows behind become unrecognizable smears) — and it falls back to opaque
+          grey on a non-activating panel unless you force `state = .active` *and* "Reduce transparency"
+          is off; (2) a raw private `CABackdropLayer` captures only *within* its own window, so over a
+          transparent panel it blurs nothing. The working path is the private SkyLight call
+          `CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), windowNumber, radius)` (no SIP;
+          declared in `PrivateAPIs.swift` as `setWindowBackgroundBlur(window:radius:)`), applied to the
+          overview panel *after* it's on screen so it has a valid window number. The radius is tunable —
+          settled on **22** (`OverlayController.overviewBlurRadius`); ~8–12 reads sharper, ~30–50 ≈
+          NSVisualEffectView. The SwiftUI view lays only a faint `Color(8,8,12).opacity(0.10)` tint that
+          the blurred windows show through (it also gives the panel the bit of alpha the window-server
+          blur composites under). Caveat: with "Reduce transparency" *on*, the OS drops the blur — that's
+          a user setting, not a bug.
       - [x] **Spring polish.** Presets kept as-is — user feedback already confirmed **Track and Pop
         feel best**, and the cycle order `[track, pop, glide]` puts those two first with **Glide last
         (optional)**. ⌃⌥T cycling updates the status pill's transition label. No retune warranted.

@@ -24,6 +24,10 @@ public final class OverlayController {
     /// (which carry only a frame) can tint the border without re-deriving it.
     private var focusAccent: NSColor = .white
 
+    /// Behind-window blur radius for the overview backdrop. Light enough that the windows behind stay
+    /// recognizable (NSVisualEffectView is effectively ~30–50); tune here for more/less blur.
+    private static let overviewBlurRadius = 22
+
     /// How far the ring sits outside the window's frame, and its corner radius.
     private static let ringInset: CGFloat = 2
     private static let ringWidth: CGFloat = 3
@@ -129,6 +133,10 @@ public final class OverlayController {
             self.renderOverview(into: panel, snapshot)
             panel.setFrame(screen.frame, display: true)
             panel.orderFrontRegardless()
+            // Tunable behind-window blur (window-server level). Light radius keeps the windows behind
+            // recognizable — unlike NSVisualEffectView's fixed, heavy blur. Applied after the panel is
+            // on screen so it has a valid window number.
+            setWindowBackgroundBlur(window: panel.windowNumber, radius: Self.overviewBlurRadius)
             self.overviewPanel = panel
         }
     }

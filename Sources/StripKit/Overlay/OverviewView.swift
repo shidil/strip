@@ -28,11 +28,12 @@ struct OverviewView: View {
 
     var body: some View {
         ZStack {
-            // Translucent dark backdrop (prototype: rgba(8,8,12,.68) + blur). A plain translucent
-            // tint is used rather than an `NSVisualEffectView` behind-window blur: on a non-activating
-            // overlay panel that blur falls back to an opaque grey (e.g. when "Reduce transparency" is
-            // on), which looked worse than this honest see-through dim.
-            Color(red: 8 / 255, green: 8 / 255, blue: 12 / 255).opacity(0.55)
+            // The behind-window blur (prototype: backdrop-filter blur over rgba(8,8,12,.68)) is applied
+            // at the window-server level by `OverlayController` (`setWindowBackgroundBlur`), with a
+            // tunable radius so the windows behind stay recognizable. Here we just lay a faint dark tint
+            // the blurred windows show through — it also gives the panel the bit of alpha the
+            // window-server blur composites under — and a tap target to dismiss.
+            Color(red: 8 / 255, green: 8 / 255, blue: 12 / 255).opacity(0.10)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture { onClose() } // click off the cards to dismiss
