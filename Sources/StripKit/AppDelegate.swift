@@ -37,8 +37,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    /// Quit safety (M7): un-park any off-screen windows before we exit so a quit never strands a
+    /// window off the display edge. Stop reacting first so nothing re-parks during teardown.
+    public func applicationWillTerminate(_ notification: Notification) {
+        observer.stop()
+        controller.unparkAllOnScreen()
+    }
+
     /// Route a hotkey command to the controller.
     private func handle(_ command: HotkeyCommand) {
+        // ⌃⌥0 toggles the release/suspend escape hatch.
+        if case .releaseAll = command { controller.releaseAll(); rebuildMenu(); return }
+        // Any explicit layout/navigation command resumes management first; overlay-only keys don't,
+        // so you can pop up help/Overview without un-suspending.
+        switch command {
+        case .toggleHelp, .toggleOverview, .overview: break
+        default: controller.resumeIfSuspended()
+        }
         switch command {
         case .slidePrev: controller.rotate(-1)
         case .slideNext: controller.rotate(1)
@@ -56,6 +71,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         case .shorter: controller.adjustHeight(-0.05)
         case .gapTighter: controller.adjustGap(-4)
         case .gapLooser: controller.adjustGap(+4)
+        case .releaseAll: break // handled above (early return); listed for exhaustiveness
         case .toggleHelp: overlay.toggleHelp()
         case .toggleOverview: overlay.toggleOverview()
         case .overview(let key):
@@ -81,9 +97,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu()
 
-        let status = AccessibilityService.isTrusted
-            ? "Managing \(controller.managedCount) window(s)"
-            : "Waiting for Accessibility…"
+        let status: String
+        if !AccessibilityService.isTrusted {
+            status = "Waiting for Accessibility…"
+        } else if controller.isSuspended {
+            status = "Released — management paused"
+        } else {
+            status = "Managing \(controller.managedCount) window(s)"
+        }
         let header = NSMenuItem(title: status, action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
@@ -105,6 +126,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         add(menu, "Slide film ◀ (prev)", #selector(slidePrev), "[")
         add(menu, "Slide film ▶ (next)", #selector(slideNext), "]")
         add(menu, "Pin / unpin focused slot", #selector(togglePin), "p")
+
+        menu.addItem(.separator())
+        add(menu, controller.isSuspended ? "Resume managing (⌃⌥0)" : "Release windows (⌃⌥0)",
+            #selector(toggleRelease), "")
 
         menu.addItem(.separator())
         add(menu, "Overview", #selector(toggleOverview), "")
@@ -133,6 +158,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func slidePrev() { controller.rotate(-1) }
     @objc private func slideNext() { controller.rotate(1) }
     @objc private func togglePin() { controller.togglePin() }
+    @objc private func toggleRelease() { controller.releaseAll(); rebuildMenu() }
     @objc private func toggleOverview() { overlay.toggleOverview() }
     @objc private func toggleHelp() { overlay.toggleHelp() }
     @objc private func quit() { NSApp.terminate(nil) }

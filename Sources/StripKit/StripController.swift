@@ -15,6 +15,11 @@ public final class StripController {
     /// When true (M2+), frame changes spring smoothly; when false, they snap instantly.
     public var animated = true
 
+    /// Release-all escape hatch (M7): while suspended, Strip stops driving windows entirely —
+    /// `refresh()`/`apply()` no-op so debounced auto-react events are ignored and windows stay
+    /// exactly where the user left them. Toggled by ⌃⌥0 (or resumed by any explicit command).
+    public private(set) var isSuspended = false
+
     /// Emitted after every `apply()` so the overlay chrome (M4 film rail, etc.) can re-render.
     public var onRender: ((OverlaySnapshot) -> Void)?
 
@@ -26,6 +31,7 @@ public final class StripController {
         self.state = StripState(cols: 3, emphasis: .focus, focusSlot: .C)
         self.screen = NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
         animator.onFocusFrame = { [weak self] frame in self?.onFocusFrame?(frame) }
+        animator.onWindowLost = { [weak self] id in self?.dropLostWindow(id) }
         restoreSettings()
     }
 
@@ -64,10 +70,23 @@ public final class StripController {
     /// when we've parked it off-screen — so re-scanning never drops our own parked windows. The
     /// "is it on the active display" test only gates *new* windows joining the strip.
     public func refresh() {
+        guard !isSuspended else { return }
         screen = activeScreen()
         let all = ax.allWindows()
         var allById: [CGWindowID: ManagedWindow] = [:]
         for w in all { allById[w.id] = w }
+
+        // Transient-miss resilience (M7): AX enumeration is flaky during app activation churn — a
+        // busy app can return an incomplete window list for one scan, especially right after we
+        // activate a window on `apply()`. A ring window absent from *this* scan but whose AX element
+        // is still alive is just such a miss, not a closed window; keep it (reusing its still-valid
+        // handle, refreshing its live frame) so it isn't wrongly dropped and stranded out of the
+        // strip. Only a genuinely-dead element falls through to be dropped below.
+        for id in state.ring where allById[id] == nil {
+            guard var w = windowsById[id], w.ax.isAlive else { continue }
+            if let live = w.ax.frame { w.frame = live }
+            allById[id] = w
+        }
 
         // New-membership candidates: windows centered on the active display — PLUS any window
         // that's orphaned off every display (e.g. parked off-screen by a previous Strip that was
@@ -255,7 +274,7 @@ public final class StripController {
     /// Compute placements and move every managed window to its target frame — springing smoothly
     /// when `animated`, snapping instantly otherwise.
     public func apply() {
-        guard !state.ring.isEmpty else { return }
+        guard !isSuspended, !state.ring.isEmpty else { return }
         let vis = screen.quartzVisibleFrame
         let layout = StripLayout(state)
         let placements = layout.placements(in: vis)
@@ -317,6 +336,104 @@ public final class StripController {
     public func refreshAndApply() {
         refresh()
         apply()
+    }
+
+    // MARK: - Release / suspend (M7 escape hatch)
+
+    /// Toggle the release-all escape hatch (⌃⌥0). When engaging, un-park every managed window that
+    /// has been pushed off-screen back onto sane on-screen frames, then **suspend** management so
+    /// auto-react stops touching windows — an explicit "let go." Toggling again (or any explicit
+    /// command, via `resumeIfSuspended()`) resumes and re-tiles.
+    public func releaseAll() {
+        if isSuspended { resume(); return }
+
+        screen = activeScreen()
+        let n = unparkStranded(in: screen.quartzVisibleFrame)
+        isSuspended = true
+        Log.line("release-all: un-parked \(n) window(s), management SUSPENDED (⌃⌥0 to resume)")
+    }
+
+    /// Move every managed window that's currently parked off the visible area back onto a sane
+    /// on-screen frame, **synchronously on the main thread**. Called from `applicationWillTerminate`
+    /// so quitting Strip (today only the *next* launch reclaims orphans) never leaves a window
+    /// stranded off the display edge. Hard crashes can't run code; those still rely on the next
+    /// launch's orphan-reclaim in `refresh()`.
+    public func unparkAllOnScreen() {
+        let n = unparkStranded(in: activeScreen().quartzVisibleFrame)
+        if n > 0 { Log.line("quit: un-parked \(n) window(s) back on-screen") }
+    }
+
+    /// Drop a window the animator reported dead (AX writes failing — stale element after an app
+    /// relaunch/crash) so it stops occupying a slot and wedging re-tiles. If it was the centered
+    /// window, hand the center to a surviving neighbor (same rule as closing the centered window);
+    /// pins on it are cleared. Re-applies so the strip closes the gap. (M7 AX-drop recovery.)
+    private func dropLostWindow(_ id: CGWindowID) {
+        guard state.ring.contains(id) else { return }
+        let old = state
+        state.ring.removeAll { $0 == id }
+        windowsById[id] = nil
+        state.pins = state.pins.filter { $0.value != id }
+        if state.centerId == id {
+            state.centerId = Self.neighborOfClosedCenter(in: old, survivors: Set(state.ring))
+                ?? state.ring.first
+        }
+        state.clampToValidSlots()
+        Log.line("ax-drop: window \(id) dead (AX writes failing) — dropped from strip")
+        apply()
+    }
+
+    /// Find every managed window whose center sits outside `vis` (parked off-screen) and write it
+    /// back to a centered, cascaded on-screen frame via direct AX (no animator — used by the
+    /// release escape hatch and quit-safety, neither of which can rely on the display link ticking).
+    /// On-screen windows are left exactly where they are. Returns how many were rescued.
+    @discardableResult
+    private func unparkStranded(in vis: CGRect) -> Int {
+        let stranded = state.ring.compactMap { id -> AXWindow? in
+            guard let w = windowsById[id] else { return nil }
+            let f = w.ax.frame ?? w.frame
+            return vis.contains(CGPoint(x: f.midX, y: f.midY)) ? nil : w.ax
+        }
+        for (i, ax) in stranded.enumerated() {
+            let frame = Self.unparkFrame(index: i, of: stranded.count, in: vis)
+            EnhancedUI.suppressed(on: AXUIElementCreateApplication(ax.pid)) { ax.setFrame(frame) }
+        }
+        return stranded.count
+    }
+
+    /// Resume management after a release and re-tile immediately.
+    public func resume() {
+        guard isSuspended else { return }
+        isSuspended = false
+        // Drop the animator's cached spring positions so every window re-seats from where it
+        // actually sits now (you may have dragged things around while released) and visibly springs
+        // back into the strip — otherwise the animator stays "settled" and nothing moves.
+        animator.reset()
+        Log.line("release-all: management RESUMED")
+        refreshAndApply()
+    }
+
+    /// Resume if currently suspended; a no-op otherwise. Called when the user issues an explicit
+    /// layout/navigation command so they don't have to press ⌃⌥0 first.
+    public func resumeIfSuspended() {
+        if isSuspended { resume() }
+    }
+
+    /// On-screen frame for a window being un-parked/released. Centered at a comfortable size, then
+    /// cascaded by `index` so several released windows don't land in a perfect stack. Pure (only
+    /// `CGRect` math) so the geometry is unit-testable without AppKit/AX.
+    static func unparkFrame(index: Int, of count: Int, in vis: CGRect) -> CGRect {
+        let size = CGSize(width: vis.width * 0.6, height: vis.height * 0.7)
+        let originX = vis.minX + (vis.width - size.width) / 2
+        let originY = vis.minY + (vis.height - size.height) / 2
+        // Cascade down-right within the slack between the centered window and the visible edges,
+        // wrapping so the offset never pushes the window off-screen no matter how many are released.
+        // The window starts centered, so only *half* the slack is available below/right of it.
+        let step: CGFloat = 36
+        let slackX = max(0, vis.width - size.width) / 2
+        let slackY = max(0, vis.height - size.height) / 2
+        let span = max(1, Int(min(slackX, slackY) / step))
+        let k = CGFloat(count > 1 ? index % span : 0)
+        return CGRect(x: originX + k * step, y: originY + k * step, width: size.width, height: size.height)
     }
 
     // MARK: - Helpers

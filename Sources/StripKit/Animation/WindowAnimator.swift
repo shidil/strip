@@ -22,6 +22,12 @@ public final class WindowAnimator: NSObject {
     private var inFlight: Set<CGWindowID> = []
     private var queues: [pid_t: DispatchQueue] = [:]
     private var suppressedApps: [pid_t: AXUIElement] = [:]
+    private var failures = WriteFailureTracker()
+
+    /// Fired (on the main thread) when a window's AX writes have failed enough to call it dead —
+    /// a stale element after an app relaunch/crash. The controller drops it from the strip so a
+    /// phantom window doesn't wedge a slot. (M7 AX-drop recovery.)
+    public var onWindowLost: ((CGWindowID) -> Void)?
 
     private var displayLink: CADisplayLink?
     private var linkScreen: NSScreen?
@@ -43,7 +49,9 @@ public final class WindowAnimator: NSObject {
         let keepIds = Set(targets.map { $0.ax.windowID })
 
         // Drop windows no longer present.
-        for id in entries.keys where !keepIds.contains(id) { entries[id] = nil; inFlight.remove(id) }
+        for id in entries.keys where !keepIds.contains(id) {
+            entries[id] = nil; inFlight.remove(id); failures.forget(id)
+        }
 
         for t in targets {
             guard let id = t.ax.windowIDOrNil else { continue }
@@ -66,6 +74,16 @@ public final class WindowAnimator: NSObject {
 
         ensureRunning(on: screen)
         emitFocusFrame() // place the ring at the window's current position right away
+    }
+
+    /// Forget all cached spring state so the next `animate(_:on:)` re-seats every window from its
+    /// **live** frame. Needed after the user has freely moved windows while Strip was suspended
+    /// (release-all, M7): without this the animator believes each window is still at its old slot
+    /// and stays "settled," so resuming wouldn't visibly pull the rearranged windows back in.
+    public func reset() {
+        entries.removeAll()
+        inFlight.removeAll()
+        failures = WriteFailureTracker()
     }
 
     /// Apply targets instantly with no animation (used when animation is disabled).
@@ -142,8 +160,17 @@ public final class WindowAnimator: NSObject {
             return q
         }()
         queue.async { [weak self] in
-            ax.setFrame(frame)
-            DispatchQueue.main.async { self?.inFlight.remove(id) }
+            let err = ax.setFrame(frame)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.inFlight.remove(id)
+                if self.failures.record(id, error: err) {
+                    // The element is dead — stop driving it and tell the controller to drop it.
+                    self.entries[id] = nil
+                    self.failures.forget(id)
+                    self.onWindowLost?(id)
+                }
+            }
         }
     }
 }

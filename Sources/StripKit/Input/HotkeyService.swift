@@ -17,6 +17,7 @@ public enum HotkeyCommand {
     case shorter                       // ↓   shrink window height
     case gapTighter                    // [   smaller gaps/padding
     case gapLooser                     // ]   larger gaps/padding
+    case releaseAll                    // 0   release/suspend escape hatch (M7)
     case toggleOverview                // Space (M5)
     case toggleHelp                    // ?   (M4)
     case overview(OverviewKey)         // arrows / h j k l / Enter / Esc — only while overview is open
@@ -107,6 +108,7 @@ public final class HotkeyService {
         case kVK_DownArrow:   return .shorter
         case kVK_ANSI_LeftBracket:  return .gapTighter
         case kVK_ANSI_RightBracket: return .gapLooser
+        case kVK_ANSI_0: return .releaseAll
         case kVK_Space:  return .toggleOverview
         case kVK_ANSI_Slash: return .toggleHelp   // ⌃⌥/  (the "?" key)
         default: return nil
@@ -157,6 +159,7 @@ private let kVK_ANSI_K = 0x28
 private let kVK_ANSI_P = 0x23
 private let kVK_ANSI_E = 0x0E
 private let kVK_ANSI_T = 0x11
+private let kVK_ANSI_0 = 0x1D
 private let kVK_ANSI_1 = 0x12
 private let kVK_ANSI_2 = 0x13
 private let kVK_ANSI_3 = 0x14

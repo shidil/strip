@@ -39,6 +39,16 @@ public struct AXWindow {
         return settable.boolValue
     }
 
+    /// Whether this element still refers to a live window. A transiently-busy app can fail an AX
+    /// read (`.cannotComplete`) for a window that's perfectly alive, so only a hard
+    /// `.invalidUIElement` — the element has been destroyed — counts as dead. Used by `refresh()`
+    /// to avoid dropping a ring window just because one enumeration scan missed it.
+    public var isAlive: Bool {
+        var ref: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &ref)
+        return err != .invalidUIElement
+    }
+
     /// Window frame in Quartz global coordinates (top-left origin, Y down).
     public var frame: CGRect? {
         guard let pos = copyPoint(kAXPositionAttribute), let size = copySize(kAXSizeAttribute) else {
@@ -51,22 +61,29 @@ public struct AXWindow {
 
     /// Apply a target frame. Uses the rift/OmniWM "set size twice" idiom: setting size, then
     /// position, then size again defeats apps that clamp size to their min/max during the move.
-    public func setFrame(_ rect: CGRect) {
-        setSize(rect.size)
-        setPosition(rect.origin)
-        setSize(rect.size)
+    /// Returns the most telling `AXError`: a hard `.invalidUIElement` (the window is gone) wins, so
+    /// the animator's AX-drop recovery (M7) can tell a dead element from a transient hiccup.
+    @discardableResult
+    public func setFrame(_ rect: CGRect) -> AXError {
+        let a = setSize(rect.size)
+        let b = setPosition(rect.origin)
+        let c = setSize(rect.size)
+        for e in [a, b, c] where e == .invalidUIElement { return .invalidUIElement }
+        return b != .success ? b : (a != .success ? a : c)
     }
 
-    public func setPosition(_ p: CGPoint) {
+    @discardableResult
+    public func setPosition(_ p: CGPoint) -> AXError {
         var pt = p
-        guard let value = AXValueCreate(.cgPoint, &pt) else { return }
-        AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
+        guard let value = AXValueCreate(.cgPoint, &pt) else { return .failure }
+        return AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
     }
 
-    public func setSize(_ s: CGSize) {
+    @discardableResult
+    public func setSize(_ s: CGSize) -> AXError {
         var sz = s
-        guard let value = AXValueCreate(.cgSize, &sz) else { return }
-        AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value)
+        guard let value = AXValueCreate(.cgSize, &sz) else { return .failure }
+        return AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value)
     }
 
     /// Bring this window to the front of its app's window stack (z-order only — does not move
