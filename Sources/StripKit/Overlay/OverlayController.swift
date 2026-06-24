@@ -34,9 +34,11 @@ public final class OverlayController {
     /// recognizable (NSVisualEffectView is effectively ~30–50); tune here for more/less blur.
     private static let overviewBlurRadius = 22
 
-    /// Point size of a card's content (thumbnail) region — the 304×190 card minus its 34px title bar.
-    /// Captures are sized to this aspect so window contents fit without distortion.
-    private static let cardThumbSize = CGSize(width: 304, height: 156)
+    /// Max point size of a card's content (thumbnail) region used to bound capture resolution. Height
+    /// is the shared card body height (156); width covers the widest card (body height × max aspect ≈
+    /// 2.2) so wide windows capture crisply. The capture itself is sized to each window's own aspect
+    /// within this box (see `WindowThumbnailer`).
+    private static let cardThumbSize = CGSize(width: 688, height: 312)
 
     /// How far the ring sits outside the window's frame, and its corner radius.
     private static let ringInset: CGFloat = 2

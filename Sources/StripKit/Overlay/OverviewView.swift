@@ -84,12 +84,24 @@ private struct OverviewCard: View {
     /// Captured window contents, or `nil` to fall back to the accent placeholder.
     let thumbnail: CGImage?
 
+    /// All cards share one body height; width follows the window's (clamped) aspect so the thumbnail
+    /// fills the body without letterbox bars while rows stay the same height.
+    private static let titleBarHeight: CGFloat = 34
+    private static let bodyHeight: CGFloat = 312
+    private static let minAspect: CGFloat = 0.6   // tallest card allowed (portrait windows)
+    private static let maxAspect: CGFloat = 2.2   // widest card allowed (ultrawide windows)
+
+    private var cardWidth: CGFloat {
+        let a = min(max(item.aspect, Self.minAspect), Self.maxAspect)
+        return (Self.bodyHeight * a).rounded()
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             titleBar
             body_
         }
-        .frame(width: 304, height: 190)
+        .frame(width: cardWidth, height: Self.titleBarHeight + Self.bodyHeight)
         .clipShape(RoundedRectangle(cornerRadius: 13))
         .overlay(
             RoundedRectangle(cornerRadius: 13)

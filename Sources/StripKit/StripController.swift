@@ -183,9 +183,10 @@ public final class StripController {
         let pinned = Set(state.pins.values)
         let items = state.ring.compactMap { id -> RailItem? in
             guard let w = windowsById[id] else { return nil }
+            let aspect = w.frame.height > 0 ? w.frame.width / w.frame.height : 1.6
             return RailItem(id: id, letter: w.letter, appName: w.appName, title: w.title,
                             accent: w.accent, assigned: assigned.contains(id),
-                            active: id == activeId, pinned: pinned.contains(id))
+                            active: id == activeId, pinned: pinned.contains(id), aspect: aspect)
         }
 
         let activeApp = activeId.flatMap { windowsById[$0]?.appName } ?? "—"

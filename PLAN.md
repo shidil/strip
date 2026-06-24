@@ -197,8 +197,11 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Q
           (an `ObservableObject` keyed by `CGWindowID`) captures **on overview open** and merges results
           so reopens paint stale thumbnails instantly; `OverviewCard.body_` shows `Image(decorative:scale:2)`
           when present, else the accent gradient. Each capture buffer is sized to the **window's own
-          aspect** (from `SCWindow.frame`) so the image has no baked-in letterbox bars; the card renders
-          it with `.aspectRatio(contentMode: .fit)` — whole window centered on a dark backing, Mission-Control style. Screen Recording is a **second TCC grant** — requested
+          aspect** (from `SCWindow.frame`) so the image has no baked-in letterbox bars. To avoid bars in
+          the card too, cards are **uniform-height, variable-width**: all share `bodyHeight` (312pt) and
+          take `width = bodyHeight × aspect` (aspect from `RailItem.aspect`, clamped 0.6–2.2), so rows
+          stay tidy like a justified gallery and the thumbnail fills the body (`.aspectRatio(.fit)`,
+          Mission-Control style). Capture resolution is bounded by the widest card (688×312pt) for crispness. Screen Recording is a **second TCC grant** — requested
           once on first open (`CGPreflight/RequestScreenCaptureAccess`), placeholders shown until granted.
           Like Accessibility the grant attributes to the launching process, so `make open` + stable signing
           covers it; re-launch via `make open` after granting. `includeChildWindows` was dropped (it's

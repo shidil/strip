@@ -18,9 +18,12 @@ public struct RailItem: Identifiable {
     public let active: Bool
     /// Pinned → gold pin dot.
     public let pinned: Bool
+    /// Window aspect ratio (width / height), used to size the overview card so its thumbnail needs
+    /// no letterbox bars. The view clamps it to a sane range.
+    public let aspect: CGFloat
 
     public init(id: CGWindowID, letter: String, appName: String, title: String, accent: NSColor,
-                assigned: Bool, active: Bool, pinned: Bool) {
+                assigned: Bool, active: Bool, pinned: Bool, aspect: CGFloat) {
         self.id = id
         self.letter = letter
         self.appName = appName
@@ -29,6 +32,7 @@ public struct RailItem: Identifiable {
         self.assigned = assigned
         self.active = active
         self.pinned = pinned
+        self.aspect = aspect
     }
 }
 
