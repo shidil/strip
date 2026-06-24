@@ -129,14 +129,13 @@ private struct OverviewCard: View {
     private var body_: some View {
         ZStack {
             if let thumbnail {
-                // Real window capture. Dark backing shows through any letterbox bars from `scalesToFit`;
-                // `.fill + .clipped()` fills the card region. `scale: 2` matches the capture scale so
-                // the retina image isn't drawn double-size.
+                // Real window capture. The image is already at the window's own aspect (no baked-in
+                // bars), so `.fit` shows the whole window centered on the dark backing — like Mission
+                // Control. `scale: 2` matches the capture scale so the retina image isn't drawn 2×.
                 Color(red: 18 / 255, green: 18 / 255, blue: 24 / 255)
                 Image(decorative: thumbnail, scale: CGFloat(ThumbnailStore.scale), orientation: .up)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .clipped()
+                    .aspectRatio(contentMode: .fit)
             } else {
                 // Placeholder: accent gradient + title (shown until a capture lands, or when Screen
                 // Recording is unavailable / the window can't be captured).

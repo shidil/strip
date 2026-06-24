@@ -38,13 +38,13 @@ enum WindowThumbnailer {
         let windows = shareable.windows.filter { wanted.contains($0.windowID) }
         guard !windows.isEmpty else { return [:] }
 
-        let pixelWidth = Int(pointSize.width) * scale
-        let pixelHeight = Int(pointSize.height) * scale
+        let maxBox = CGSize(width: pointSize.width * CGFloat(scale),
+                            height: pointSize.height * CGFloat(scale))
 
         return await withTaskGroup(of: (CGWindowID, CGImage?).self) { group in
             for window in windows {
                 group.addTask {
-                    (window.windowID, try? await captureOne(window, width: pixelWidth, height: pixelHeight))
+                    (window.windowID, try? await captureOne(window, maxBox: maxBox))
                 }
             }
             var out: [CGWindowID: CGImage] = [:]
@@ -55,17 +55,32 @@ enum WindowThumbnailer {
         }
     }
 
-    /// Capture one window into a `width × height` pixel buffer, fit (letterboxed) without stretching.
-    private static func captureOne(_ window: SCWindow, width: Int, height: Int) async throws -> CGImage {
+    /// Capture one window into a buffer sized to **the window's own aspect ratio**, scaled to fit
+    /// within `maxBox` (pixels). Sizing the buffer to the window — rather than forcing the card's
+    /// aspect — means the returned image is pure window content with **no baked-in letterbox bars**;
+    /// the card then fits it onto its dark backing in SwiftUI.
+    private static func captureOne(_ window: SCWindow, maxBox: CGSize) async throws -> CGImage {
+        let size = fitted(aspectOf: window.frame.size, within: maxBox)
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()
-        config.width = width
-        config.height = height
+        config.width = size.width
+        config.height = size.height
         config.scalesToFit = true               // fit the window into the box, no stretch
         config.showsCursor = false
         config.ignoreShadowsSingleWindow = true  // drop the drop-shadow alpha halo
         config.ignoreGlobalClipSingleWindow = true // capture full content even if clipped by a screen edge
         config.captureResolution = .best
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+    }
+
+    /// Largest integer pixel size matching `source`'s aspect ratio that fits inside `box`. Falls back
+    /// to the full box if the window size is degenerate.
+    private static func fitted(aspectOf source: CGSize, within box: CGSize) -> (width: Int, height: Int) {
+        guard source.width > 0, source.height > 0 else {
+            return (max(1, Int(box.width)), max(1, Int(box.height)))
+        }
+        let scale = min(box.width / source.width, box.height / source.height)
+        return (max(1, Int((source.width * scale).rounded())),
+                max(1, Int((source.height * scale).rounded())))
     }
 }
