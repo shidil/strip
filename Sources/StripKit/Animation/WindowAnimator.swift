@@ -25,6 +25,11 @@ public final class WindowAnimator: NSObject {
     /// user's chosen film-slide feel.
     private var pendingConfigOverride: SpringConfig?
 
+    /// One-shot set of windows the *next* `animate(_:on:)` should snap straight to their target
+    /// (seeded at the target so the spring is already settled) instead of springing — for apps that
+    /// re-quantize their size every frame (terminals). Cleared after that animate.
+    private var pendingSnapIDs: Set<CGWindowID> = []
+
     private var entries: [CGWindowID: Entry] = [:]
     private var inFlight: Set<CGWindowID> = []
     private var queues: [pid_t: DispatchQueue] = [:]
@@ -72,13 +77,15 @@ public final class WindowAnimator: NSObject {
 
         for t in targets {
             guard let id = t.ax.windowIDOrNil else { continue }
+            let snap = pendingSnapIDs.contains(id)
             if var existing = entries[id] {
                 existing.target = t.frame
                 existing.ax = t.ax // use the freshest AX handle after a re-scan
                 existing.config = pendingConfigOverride // nil on a normal apply → back to global feel
+                if snap { existing.spring = RectSpring(t.frame) } // already at target → one write, no staircase
                 entries[id] = existing
             } else {
-                let start = t.ax.frame ?? t.frame
+                let start = snap ? t.frame : (t.ax.frame ?? t.frame)
                 entries[id] = Entry(ax: t.ax, spring: RectSpring(start), target: t.frame,
                                     config: pendingConfigOverride)
             }
@@ -92,6 +99,7 @@ public final class WindowAnimator: NSObject {
         }
 
         pendingConfigOverride = nil // one-shot: consumed by this animate
+        pendingSnapIDs = []
         ensureRunning(on: screen)
         emitFocusFrame() // place the ring at the window's current position right away
     }
@@ -99,6 +107,10 @@ public final class WindowAnimator: NSObject {
     /// Make the next `animate(_:on:)` drive its windows with a crisp snap-back spring instead of the
     /// current film-slide feel — used when re-absorbing a hand-dragged window (M7).
     public func requestSnapBack(_ cfg: SpringConfig = .snapBack) { pendingConfigOverride = cfg }
+
+    /// Mark windows the next `animate(_:on:)` should snap (not spring) to their target — for
+    /// size-quantizing apps (terminals) whose per-frame re-quantization makes a spring staircase.
+    public func snapNext(_ ids: Set<CGWindowID>) { pendingSnapIDs = ids }
 
     /// Forget all cached spring state so the next `animate(_:on:)` re-seats every window from its
     /// **live** frame. Needed after the user has freely moved windows while Strip was suspended

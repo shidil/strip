@@ -370,10 +370,21 @@ public final class StripController {
         }
 
         // Return crisply (snap-back spring), gliding from where the user let go (forget → re-seat
-        // from the live frame) rather than no-op'ing on a stale spring.
+        // from the live frame) rather than no-op'ing on a stale spring. Terminal-class windows snap
+        // straight to their target instead of springing — springing makes them re-quantize their
+        // character-cell size every frame (a visible staircase); one write avoids it.
         animator.forget(id)
         animator.requestSnapBack()
+        animator.snapNext(steppingWindowIds())
         apply()
+    }
+
+    /// Ring windows whose app quantizes its size on resize (terminals) — they snap rather than spring.
+    private func steppingWindowIds() -> Set<CGWindowID> {
+        Set(state.ring.filter { id in
+            guard let w = windowsById[id] else { return false }
+            return SteppingApps.isStepping(key: w.accentKey, appName: w.appName)
+        })
     }
 
     /// The window whose width the size knobs govern — the emphasized slot's occupant: `.C` in monocle
