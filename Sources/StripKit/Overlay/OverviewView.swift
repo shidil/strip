@@ -73,10 +73,19 @@ struct OverviewView: View {
                         }
                     }
                     .padding(.horizontal, 64)
-                    .padding(.vertical, 64)
+                    .padding(.top, 64)
+                    // leave room at the bottom so the last card row can scroll clear of the film rail.
+                    .padding(.bottom, 110)
                     .frame(maxWidth: .infinity, minHeight: geo.size.height)
                 }
             }
+
+            // The live film rail, pinned bottom-center — the same chrome that floats over the managed
+            // windows, mirrored inside the overview so the strip stays visible (the overview panel
+            // otherwise covers the rail's own lower-level panel). Clicking a chip centers + dismisses.
+            FilmRailView(items: items) { id in onCenter(id); onClose() }
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, 24)
         }
     }
 
