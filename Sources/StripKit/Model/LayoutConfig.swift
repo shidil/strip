@@ -19,14 +19,31 @@ public struct LayoutConfig: Equatable, Codable {
     /// Every slotted window's height as a fraction of the usable height, **centered vertically** so
     /// there's margin top and bottom. 1.0 = full height (the default). Clamped to `heightRange`.
     public var heightFraction: CGFloat
+    /// Where a freshly-opened window lands when Strip auto-absorbs it (M6 auto-react).
+    public var newWindowPlacement: NewWindowPlacement
 
     public init(outerPadding: CGFloat = 8, innerGap: CGFloat = 8, focusRatio: CGFloat = 0.5,
-                monocleWidthFraction: CGFloat = 0.6, heightFraction: CGFloat = 1.0) {
+                monocleWidthFraction: CGFloat = 0.6, heightFraction: CGFloat = 1.0,
+                newWindowPlacement: NewWindowPlacement = .focusCenter) {
         self.outerPadding = outerPadding
         self.innerGap = innerGap
         self.focusRatio = focusRatio
         self.monocleWidthFraction = monocleWidthFraction
         self.heightFraction = heightFraction
+        self.newWindowPlacement = newWindowPlacement
+    }
+
+    /// Decode tolerantly: any field missing from an older persisted blob falls back to its default,
+    /// so adding a knob (like `newWindowPlacement`) never invalidates a user's saved settings.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = LayoutConfig()
+        outerPadding = try c.decodeIfPresent(CGFloat.self, forKey: .outerPadding) ?? d.outerPadding
+        innerGap = try c.decodeIfPresent(CGFloat.self, forKey: .innerGap) ?? d.innerGap
+        focusRatio = try c.decodeIfPresent(CGFloat.self, forKey: .focusRatio) ?? d.focusRatio
+        monocleWidthFraction = try c.decodeIfPresent(CGFloat.self, forKey: .monocleWidthFraction) ?? d.monocleWidthFraction
+        heightFraction = try c.decodeIfPresent(CGFloat.self, forKey: .heightFraction) ?? d.heightFraction
+        newWindowPlacement = try c.decodeIfPresent(NewWindowPlacement.self, forKey: .newWindowPlacement) ?? d.newWindowPlacement
     }
 
     /// Space-filling default (full height + edge-to-edge width with small uniform gaps, center ~50%;
@@ -52,4 +69,13 @@ public struct LayoutConfig: Equatable, Codable {
     public var clampedHeight: CGFloat {
         min(max(heightFraction, Self.heightRange.lowerBound), Self.heightRange.upperBound)
     }
+}
+
+/// What Strip does with a window the moment it appears (M6 auto-react).
+public enum NewWindowPlacement: String, Codable {
+    /// Slide the new window into the preferred unpinned slot — center, else right, else left — and
+    /// give it keyboard focus. The niri-like "act on what you just opened" default.
+    case focusCenter
+    /// Tuck the new window at the end of the film, out of the way, without stealing focus.
+    case append
 }

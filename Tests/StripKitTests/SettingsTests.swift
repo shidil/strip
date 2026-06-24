@@ -28,4 +28,15 @@ final class SettingsTests: XCTestCase {
         let defaults = UserDefaults(suiteName: "strip.tests.empty.\(UUID().uuidString)")!
         XCTAssertNil(PersistedSettings.load(from: defaults))
     }
+
+    /// A blob written before `newWindowPlacement` existed must still decode — the missing knob falls
+    /// back to its default rather than failing the whole decode (which would silently wipe settings).
+    func testLayoutConfigDecodesOlderBlobWithoutNewWindowPlacement() throws {
+        let legacy = """
+        {"outerPadding":10,"innerGap":6,"focusRatio":0.62,"monocleWidthFraction":0.55,"heightFraction":0.8}
+        """.data(using: .utf8)!
+        let config = try JSONDecoder().decode(LayoutConfig.self, from: legacy)
+        XCTAssertEqual(config.focusRatio, 0.62, accuracy: 0.0001)
+        XCTAssertEqual(config.newWindowPlacement, .focusCenter, "missing knob defaults, decode succeeds")
+    }
 }

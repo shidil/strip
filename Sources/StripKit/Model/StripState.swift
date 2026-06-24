@@ -54,6 +54,16 @@ public struct StripState {
         cols == 2 ? .L : .C
     }
 
+    /// Preferred landing order for a freshly-opened window: the centered/primary slot first, then
+    /// right, then left. Used by `insertManaged` to honor the user's center→right→left preference.
+    public var newWindowSlotPreference: [Slot] {
+        switch cols {
+        case 1: return [.C]
+        case 2: return [.L, .R]
+        default: return [.C, .R, .L]
+        }
+    }
+
     // MARK: - Mutations
 
     /// Pin or unpin the focused slot. Pinning fixes whatever window currently occupies the focused
@@ -89,6 +99,72 @@ public struct StripState {
         if let ps = pins.first(where: { $0.value == id })?.key { pins[ps] = nil }
         centerId = id
         focusSlot = primarySlot
+        clampToValidSlots()
+    }
+
+    /// Absorb a freshly-discovered window into the film, positioned per `placement`. Pure (mutates
+    /// only `self`) so the placement logic is unit-testable without AppKit/AX.
+    ///
+    /// `.append` drops it at the end of the ring, out of the way, without stealing focus.
+    /// `.focusCenter` brings it to the preferred *unpinned* slot — center, else right, else left —
+    /// and gives that slot keyboard focus. The common case (center slot free) simply makes the new
+    /// window the centered window; when the center slot is pinned it lands in the next preferred
+    /// slot by inserting into the unpinned sequence at the offset `resolve()` maps to that slot,
+    /// leaving the pinned window untouched.
+    public mutating func insertManaged(_ id: CGWindowID, placement: NewWindowPlacement) {
+        guard !ring.contains(id) else { return }
+
+        if placement == .append {
+            ring.append(id)
+            if centerId == nil { centerId = id }
+            return
+        }
+
+        let pinnedSet = Set(pins.values)
+        var unpinned = ring.filter { !pinnedSet.contains($0) }
+        let unpinnedSlots = slots.filter { pins[$0] == nil }
+
+        // No unpinned slot to show it in (every slot pinned) → tuck it at the end of the film.
+        guard let target = newWindowSlotPreference.first(where: { pins[$0] == nil }) else {
+            ring.append(id)
+            if centerId == nil { centerId = id }
+            return
+        }
+
+        // The slot the centered window occupies (resolve()'s anchor): primary if unpinned, else
+        // the first unpinned slot.
+        let anchorSlot = unpinnedSlots.contains(primarySlot) ? primarySlot : (unpinnedSlots.first ?? primarySlot)
+
+        // Common case: the preferred slot is the anchor → the new window simply becomes the center.
+        if target == anchorSlot || unpinned.isEmpty {
+            ring.append(id)            // ring order is irrelevant here; centerId drives the anchor
+            centerId = id
+            focusSlot = target
+            clampToValidSlots()
+            return
+        }
+
+        // Center slot is pinned: land the new window in `target` by inserting it into the unpinned
+        // sequence at the position resolve() maps to that slot, relative to the (unchanged) center.
+        let anchorIdx = unpinnedSlots.firstIndex(of: anchorSlot) ?? 0
+        let targetIdx = unpinnedSlots.firstIndex(of: target) ?? anchorIdx
+        let centerPos = centerId.flatMap { unpinned.firstIndex(of: $0) } ?? 0
+        let insertAt = max(0, min(unpinned.count, centerPos + (targetIdx - anchorIdx)))
+        unpinned.insert(id, at: insertAt)
+
+        // Rebuild the ring: pinned ids hold their positions; unpinned positions take the new order.
+        var rebuilt: [CGWindowID] = []
+        var ui = 0
+        for old in ring {
+            if pinnedSet.contains(old) {
+                rebuilt.append(old)
+            } else if ui < unpinned.count {
+                rebuilt.append(unpinned[ui]); ui += 1
+            }
+        }
+        while ui < unpinned.count { rebuilt.append(unpinned[ui]); ui += 1 }
+        ring = rebuilt
+        focusSlot = target
         clampToValidSlots()
     }
 

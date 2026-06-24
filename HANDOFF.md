@@ -37,10 +37,32 @@ off-screen; it survives quit/crash/restart.
 
 ## Milestones
 
-### M6 — Live & well-behaved (event-driven core)  ← START HERE
+### M6 — Live & well-behaved (event-driven core)  ✅ DONE (2026-06-24)
 
 The headline. Two halves that **must ship together** (auto-react without classification is a
-regression — every dialog/palette gets tiled).
+regression — every dialog/palette gets tiled). **Both shipped; verified live** — windows re-tile on
+open/close and app launch/quit with no hotkey, debounced into one reconcile, no flicker storm.
+
+**What shipped:**
+- `Accessibility/WindowObserver.swift` — per-app `AXObserver` (create/destroy/min/deminiaturize/
+  focused/main) + `NSWorkspace` launch/terminate/activate/hide → one **75 ms trailing-edge debounced**
+  `controller.refreshAndApply()`. Re-attaches on activation (covers launch-time AX-not-ready). Wired
+  in `AppDelegate.start()`. **Deliberately does NOT observe move/resize** — that would feed the
+  animator's own writes back into a reconcile storm; honoring user drags is M7.
+- `AccessibilityService.classify()` → `managed | floating | ignored` (replaces `isManageable`).
+  Conservative: floats non-standard subroles (dialogs/sheets/panels/palettes) and **non-resizable**
+  windows (`AXWindow.isResizable` probes `AXUIElementIsAttributeSettable(kAXSize)`); ignores wrong
+  role / minimized / sub-80px. Only `.managed` is tiled. No per-app denylist yet → M9.
+- **New-window placement** (`StripState.insertManaged`, pure + tested): default `.focusCenter` slides
+  a new window into the preferred *unpinned* slot (center→right→left) and focuses it; `.append` tucks
+  it at the film's end. Customizable via `LayoutConfig.newWindowPlacement` (persisted; tolerant
+  decoder so the new knob doesn't wipe old saved settings). `refresh()` only applies the policy to
+  windows that appear *while running* — initial population lays out in on-screen order.
+
+**Still open from M6 scope (minor):** when the *centered* window closes, center currently falls to
+`ring.first` rather than the nearest neighbor — fine, but a nicer neighbor-pick is a small follow-up.
+
+#### Original plan (kept for reference)
 
 **6a — Event sources → one debounced reconcile**
 - New `Accessibility/WindowObserver.swift`: owns a per-app `AXObserver` + run-loop source. Subscribe to:

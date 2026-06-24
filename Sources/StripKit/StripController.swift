@@ -83,16 +83,28 @@ public final class StripController {
             .filter(belongsToActiveStrip)
             .sorted { $0.frame.minX < $1.frame.minX }
 
-        var ring = state.ring.filter { allById[$0] != nil } // keep existing while they exist
-        for w in newOnScreen where !ring.contains(w.id) { ring.append(w.id) }
-        state.ring = ring
+        // Was the strip already populated? If so, windows appearing now are *genuinely new* (an app
+        // opened a window while Strip runs) and get the new-window placement treatment. On the very
+        // first scan (or after the strip emptied) we just lay everything out in on-screen order
+        // without yanking focus around.
+        let wasPopulated = !state.ring.isEmpty
+        let kept = state.ring.filter { allById[$0] != nil } // keep existing while they exist
+        let known = Set(kept)
+        state.ring = kept
+
+        let appeared = newOnScreen.filter { !known.contains($0.id) }
+        if wasPopulated {
+            for w in appeared { state.insertManaged(w.id, placement: state.config.newWindowPlacement) }
+        } else {
+            for w in appeared { state.ring.append(w.id) }
+        }
+
+        if state.centerId == nil || !state.ring.contains(state.centerId!) {
+            state.centerId = state.ring.first
+        }
 
         windowsById = [:]
-        for id in ring { windowsById[id] = allById[id] }
-
-        if state.centerId == nil || !ring.contains(state.centerId!) {
-            state.centerId = ring.first
-        }
+        for id in state.ring { windowsById[id] = allById[id] }
         normalize()
     }
 

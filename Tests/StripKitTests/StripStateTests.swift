@@ -89,6 +89,60 @@ final class StripStateTests: XCTestCase {
         XCTAssertEqual(s.centerId, 3, "unknown id is a no-op")
     }
 
+    // MARK: - insertManaged (new-window placement, M6)
+
+    func testNewWindowCentersAndTakesFocus() {
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .R)
+        s.insertManaged(99, placement: .focusCenter)
+        XCTAssertEqual(s.centerId, 99, "new window becomes the centered window")
+        XCTAssertEqual(assignment(s)[.C], 99, "and lands in the center slot")
+        XCTAssertEqual(s.focusSlot, .C, "focus moves to it")
+        XCTAssertTrue(s.ring.contains(99))
+    }
+
+    func testNewWindowLandsRightWhenCenterIsPinned() {
+        // Pin C; the next preference (right) should receive the new window, leaving the pin intact.
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, pins: [.C: 4])
+        s.insertManaged(99, placement: .focusCenter)
+        XCTAssertEqual(s.pins[.C], 4, "the pinned center window is untouched")
+        XCTAssertEqual(assignment(s)[.C], 4)
+        XCTAssertEqual(assignment(s)[.R], 99, "new window takes the right slot")
+        XCTAssertEqual(s.focusSlot, .R)
+    }
+
+    func testNewWindowLandsLeftWhenCenterAndRightPinned() {
+        // C and R pinned → only L is free, so the new window goes there.
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, pins: [.C: 4, .R: 5])
+        s.insertManaged(99, placement: .focusCenter)
+        XCTAssertEqual(assignment(s)[.L], 99, "new window takes the only free slot, left")
+        XCTAssertEqual(s.focusSlot, .L)
+        XCTAssertEqual(s.pins[.C], 4)
+        XCTAssertEqual(s.pins[.R], 5)
+    }
+
+    func testNewWindowIntoEmptyStripBecomesCenter() {
+        var s = StripState(ring: [], centerId: nil, cols: 3, emphasis: .focus)
+        s.insertManaged(99, placement: .focusCenter)
+        XCTAssertEqual(s.centerId, 99)
+        XCTAssertEqual(assignment(s)[.C], 99)
+    }
+
+    func testAppendPlacementDoesNotStealFocusOrCenter() {
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .R)
+        s.insertManaged(99, placement: .append)
+        XCTAssertEqual(s.ring.last, 99, "appended at the end of the film")
+        XCTAssertEqual(s.centerId, 3, "center unchanged")
+        XCTAssertEqual(s.focusSlot, .R, "focus unchanged")
+    }
+
+    func testInsertIsIdempotentForAKnownWindow() {
+        var s = StripState(ring: ring, centerId: 3, cols: 3)
+        let before = s
+        s.insertManaged(4, placement: .focusCenter) // 4 already in the ring
+        XCTAssertEqual(s.ring, before.ring, "re-inserting an existing window is a no-op")
+        XCTAssertEqual(s.centerId, before.centerId)
+    }
+
     // MARK: - Edge cases
 
     func testPinningAnEmptySlotIsANoOp() {

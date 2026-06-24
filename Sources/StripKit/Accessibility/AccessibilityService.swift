@@ -2,8 +2,8 @@ import AppKit
 import ApplicationServices
 
 /// Enumerates and identifies the real, standard application windows on a given display using the
-/// public Accessibility API only. (Live focus/create/destroy observation arrives in a later
-/// milestone; M0 just needs an accurate snapshot.)
+/// public Accessibility API only. This is the *snapshot* side; live create/destroy/focus
+/// observation that drives auto-re-tiling lives in `WindowObserver` (M6).
 public final class AccessibilityService {
     public init() {}
 
@@ -56,7 +56,9 @@ public final class AccessibilityService {
 
         return elements.compactMap { element -> ManagedWindow? in
             let w = AXWindow(element: element, pid: pid)
-            guard isManageable(w), let frame = w.frame, let id = axWindowID(element) else { return nil }
+            guard Self.classify(w) == .managed, let frame = w.frame, let id = axWindowID(element) else {
+                return nil
+            }
             return ManagedWindow(
                 id: id, ax: w, appName: appName, accentKey: accentKey,
                 title: w.title ?? appName, frame: frame
@@ -64,13 +66,28 @@ public final class AccessibilityService {
         }
     }
 
-    /// A window we are willing to tile: a real, standard, non-minimized window of usable size.
-    private func isManageable(_ w: AXWindow) -> Bool {
-        guard w.role == (kAXWindowRole as String) else { return false }
-        // Standard windows only; some apps report no subrole for their main window, allow that.
-        if let sub = w.subrole, sub != (kAXStandardWindowSubrole as String) { return false }
-        if w.isMinimized { return false }
-        guard let f = w.frame, f.width >= 80, f.height >= 80 else { return false }
-        return true
+    /// How Strip should treat a window. Only `.managed` windows are tiled; `.floating` windows are
+    /// real app windows we deliberately leave where they are (dialogs, palettes, non-resizable
+    /// windows); `.ignored` are not windows we'd ever consider (wrong role, minimized, too small).
+    ///
+    /// The split between `.floating` and `.ignored` doesn't change M6 behavior — both are simply
+    /// left alone — but it names the distinction the M7 "respect user drags" / ignore-rules work
+    /// will build on.
+    public enum WindowClassification { case managed, floating, ignored }
+
+    /// Conservative classifier (M6): tile only clearly-standard, resizable, usable-size windows;
+    /// float the clear-cut leave-alone cases (sheets/dialogs/panels, non-resizable). No per-app
+    /// denylist yet — that arrives with the config file in M9.
+    public static func classify(_ w: AXWindow) -> WindowClassification {
+        guard w.role == (kAXWindowRole as String) else { return .ignored }
+        if w.isMinimized { return .ignored }
+        guard let f = w.frame, f.width >= 80, f.height >= 80 else { return .ignored }
+        // Anything that isn't a plain standard window — dialogs, sheets, system dialogs, floating
+        // panels, palettes, unknown subroles — is left in place. (Some apps report no subrole for
+        // their main window; allow that as standard.)
+        if let sub = w.subrole, sub != (kAXStandardWindowSubrole as String) { return .floating }
+        // A window we can't resize can't be tiled sensibly — leave it where the app put it.
+        if !w.isResizable { return .floating }
+        return .managed
     }
 }

@@ -9,6 +9,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller = StripController()
     private let hotkeys = HotkeyService()
     private let overlay = OverlayController()
+    private let observer = WindowObserver()
 
     public override init() { super.init() }
 
@@ -30,6 +31,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.refreshAndApply()
         hotkeys.onCommand = { [weak self] in self?.handle($0) }
         hotkeys.start()
+        // Auto-react (M6): re-tile whenever windows/apps come and go, debounced into one reconcile.
+        observer.onReconcile = { [weak self] in self?.controller.refreshAndApply() }
+        observer.start()
         rebuildMenu()
     }
 

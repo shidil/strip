@@ -28,6 +28,17 @@ public struct AXWindow {
         return v
     }
 
+    /// Whether the window's size can actually be set. Probed via `AXUIElementIsAttributeSettable`
+    /// on `kAXSize`: a window we can't resize (fixed dialogs, some panels) is never tiled — moving
+    /// it without resizing would just shove it around. Defaults to `true` if the probe fails, so a
+    /// quirky-but-tileable window isn't wrongly excluded.
+    public var isResizable: Bool {
+        var settable: DarwinBoolean = false
+        let err = AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &settable)
+        guard err == .success else { return true }
+        return settable.boolValue
+    }
+
     /// Window frame in Quartz global coordinates (top-left origin, Y down).
     public var frame: CGRect? {
         guard let pos = copyPoint(kAXPositionAttribute), let size = copySize(kAXSizeAttribute) else {
