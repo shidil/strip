@@ -178,8 +178,8 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Q
       - Pin **badge** is now visible (gold dot on the rail chip). ✅
 - [x] **M5 — Overview + polish.** ✅
       - [x] **Overview** (⌃⌥Space): dimmed grid of cards (on the active display), one per ring window
-        (app name + title over an accent placeholder — real thumbnails need Screen Recording,
-        deferred). Active window framed by its accent; pinned windows get a "PINNED" badge. Click a
+        (now showing **real window thumbnails** via ScreenCaptureKit, falling back to an
+        app-name + title accent placeholder). Active window framed by its accent; pinned windows get a "PINNED" badge. Click a
         card → center + close. Prototype lines **97-109** / `overviewWindows` **280-288**.
         *Implemented:* `Sources/StripKit/Overlay/OverviewView.swift`;
         `OverlayController.toggleOverview()` (lazy `.popUpMenu`-level panel like the help overlay,
@@ -190,6 +190,17 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Q
         - **Centered rows, not `LazyVGrid`.** A fixed-column grid left-aligns the last partial row;
           instead the cards are chunked into rows of 3 (the prototype's natural wrap), each row a
           centered `HStack(maxWidth: .infinity)`, so a lone trailing card centers under the row above.
+        - **Real thumbnails via ScreenCaptureKit (no longer deferred).** `Overlay/WindowThumbnailer.swift`
+          captures each ring window with `SCScreenshotManager.captureImage` + `SCContentFilter(desktopIndependentWindow:)`,
+          matching `SCWindow.windowID` to our `CGWindowID` (so occluded windows still render their own
+          content — the win over the obsoleted `CGWindowListCreateImage`). `Overlay/ThumbnailStore.swift`
+          (an `ObservableObject` keyed by `CGWindowID`) captures **on overview open** and merges results
+          so reopens paint stale thumbnails instantly; `OverviewCard.body_` shows `Image(decorative:scale:2)`
+          when present, else the accent gradient. Screen Recording is a **second TCC grant** — requested
+          once on first open (`CGPreflight/RequestScreenCaptureAccess`), placeholders shown until granted.
+          Like Accessibility the grant attributes to the launching process, so `make open` + stable signing
+          covers it; re-launch via `make open` after granting. `includeChildWindows` was dropped (it's
+          macOS 14.2+, package targets 14.0). Fully-parked off-screen windows may not capture → placeholder.
         - **Behind-window blur via the window server (`CGSSetWindowBackgroundBlurRadius`).** The
           prototype's `backdrop-filter: blur` over the windows behind is achievable and is the chosen
           look. Two dead ends first: (1) `NSVisualEffectView(.behindWindow)` blurs but its radius is

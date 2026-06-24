@@ -24,9 +24,19 @@ public final class OverlayController {
     /// (which carry only a frame) can tint the border without re-deriving it.
     private var focusAccent: NSColor = .white
 
+    /// Live window thumbnails for the overview cards. A single shared instance so the SwiftUI
+    /// `@ObservedObject` identity stays stable across re-renders while the overview is open.
+    private let thumbnails = ThumbnailStore()
+    /// Whether we've already asked for Screen Recording this process (prompt at most once).
+    private var didRequestScreenRecording = false
+
     /// Behind-window blur radius for the overview backdrop. Light enough that the windows behind stay
     /// recognizable (NSVisualEffectView is effectively ~30–50); tune here for more/less blur.
     private static let overviewBlurRadius = 22
+
+    /// Point size of a card's content (thumbnail) region — the 304×190 card minus its 34px title bar.
+    /// Captures are sized to this aspect so window contents fit without distortion.
+    private static let cardThumbSize = CGSize(width: 304, height: 156)
 
     /// How far the ring sits outside the window's frame, and its corner radius.
     private static let ringInset: CGFloat = 2
@@ -138,6 +148,20 @@ public final class OverlayController {
             // on screen so it has a valid window number.
             setWindowBackgroundBlur(window: panel.windowNumber, radius: Self.overviewBlurRadius)
             self.overviewPanel = panel
+            self.loadThumbnails(for: snapshot)
+        }
+    }
+
+    /// Kick off thumbnail capture for the windows in `snapshot`. If Screen Recording isn't granted
+    /// yet, prompt for it once (the cards keep their accent placeholders meanwhile, and thumbnails
+    /// appear on a later open once the grant lands).
+    private func loadThumbnails(for snapshot: OverlaySnapshot) {
+        if WindowThumbnailer.screenRecordingAuthorized() {
+            thumbnails.refresh(ids: snapshot.rail.map(\.id), pointSize: Self.cardThumbSize)
+        } else if !didRequestScreenRecording {
+            didRequestScreenRecording = true
+            Log.line("overview: Screen Recording not granted — requesting; thumbnails will appear once allowed (placeholders for now)")
+            WindowThumbnailer.requestScreenRecording()
         }
     }
 
@@ -146,6 +170,7 @@ public final class OverlayController {
         let hosting = NSHostingView(rootView: AnyView(
             OverviewView(
                 items: snapshot.rail,
+                thumbnails: thumbnails,
                 onCenter: { [weak self] id in self?.onCenter?(id) },
                 onClose: { [weak self] in self?.toggleOverview() }
             )
