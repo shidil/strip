@@ -95,11 +95,39 @@ open/close and app launch/quit with no hotkey, debounced into one reconcile, no 
 **Acceptance:** open/close windows + launch/quit apps with no manual re-tile and no flicker storms;
 dialogs/palettes/non-resizable windows are left alone.
 
-### M7 — Resilience & escape hatch (won't strand you)  ← START HERE
+### M7 — Resilience & escape hatch (won't strand you)  ✅ DONE (2026-06-24)
 
-Auto-react means Strip is always touching your windows, so failure modes now matter.
+Auto-react means Strip is always touching your windows, so failure modes now matter. All four
+slices shipped and verified live; the film-strip now survives drags, quits, crashes, and panic.
 
-#### Start-here checklist (new session)
+**What shipped (slice by slice):**
+- **Release-all** (⌃⌥0) — toggle-suspend escape hatch: un-parks every off-screen window to a
+  centered/cascaded on-screen frame, then suspends management (refresh/apply no-op, auto-react
+  ignored) so windows stay put. ⌃⌥0 again — or any explicit layout/nav command — resumes and
+  re-tiles. `StripController.releaseAll`/`resume`/`unparkStranded`; `unparkFrame` is pure + tested.
+- **Un-park-on-quit** — `applicationWillTerminate` stops the observer then synchronously
+  (`unparkAllOnScreen`, no animator — the display link won't tick during termination) writes every
+  parked window back on-screen, so quitting never strands a window off the edge.
+- **AX-drop recovery** — `AXWindow.setFrame` surfaces `AXError`; `WriteFailureTracker` (pure +
+  tested) counts per-window consecutive failures and, after a hard `.invalidUIElement` or N soft
+  failures, fires `onWindowLost` → the controller drops the dead window from the ring instead of
+  wedging the animator on a stale element (app crash/relaunch).
+- **Respect user drags** — the crux. A **global left-button bracket** (`WindowObserver`) suspends
+  all management while the mouse is held (so the grab's focus change can't reconcile the held window
+  back mid-drag) and flushes the gesture on release. A user **move** of any tiled window snaps it
+  back to its slot; a **resize of the dominant window** is *kept* by inverting its frame into the
+  sizing knobs (`DragResolver`, pure + tested: width → `focusRatio`/`monocleWidthFraction`, height →
+  `heightFraction`); non-dominant resizes snap back. The animator distinguishes its **own** frame
+  writes from user drags via a settle+grace handshake (`isDriving`/`drivenUntil`), re-seats a dragged
+  window from its live frame (`forget`) so it glides from where you let go, and returns it with a
+  crisp one-shot `SnapBack` spring. Size-quantizing apps (terminals — `SteppingApps`, pure + tested)
+  snap rather than spring to avoid a per-frame re-quantization staircase.
+
+**Known residual (not a Strip defect):** heavyweight apps (e.g. cmux) beachball/step while *you*
+drag their native resize handle — their own AX-resize slowness, before Strip is involved. Per-app
+handling (disable management / force-snap) belongs to M9's config.
+
+#### Start-here checklist (kept for reference)
 
 1. **Orient (5 min):** read this M7 section + `CLAUDE.md`; run `mem_context` for project `wm` to
    recover the M6 design and gotchas. Then **plan before coding** (the author reviews plans first).
@@ -129,18 +157,14 @@ Auto-react means Strip is always touching your windows, so failure modes now mat
    on-screen; a crashed/relaunched app's stale windows drop out instead of wedging the animator;
    ⌃⌥0 releases everything to sane on-screen frames.
 
-#### Work items
+#### Work items (all ✅ — see "What shipped" above for detail)
 
-- **Release-all** (hotkey + menu, e.g. ⌃⌥0): unmanage everything and un-park to sensible on-screen
-  frames. An explicit "let go."
-- **Quit/crash safety**: on `applicationWillTerminate`, un-park all parked windows back on-screen so a
-  quit never leaves windows off the edge (today only the *next* launch reclaims them).
-- **AX-drop recovery**: when AX writes to a window start failing (stale element, app relaunch), drop it
-  from the ring instead of wedging the animator.
-- **Respect user drags**: an `AXMoved`/`AXResized` *not* initiated by the animator means the user grabbed
-  the window — re-absorb it into its slot or float it; don't fight back.
+- ✅ **Release-all** (⌃⌥0 + menu): toggle-suspend; un-park to sensible on-screen frames.
+- ✅ **Quit/crash safety**: `applicationWillTerminate` un-parks all parked windows back on-screen.
+- ✅ **AX-drop recovery**: failing AX writes drop the dead window instead of wedging the animator.
+- ✅ **Respect user drags**: mouse-bracketed; move → snap back, dominant resize → keep via knobs.
 
-### M8 — Workspaces (multiple strips)
+### M8 — Workspaces (multiple strips)  ← NEXT
 
 The niri model is *several* strips — the real organizing tool on one big display.
 - N independent `StripState`s; switch with a hotkey; carry-focused-window-to-workspace.

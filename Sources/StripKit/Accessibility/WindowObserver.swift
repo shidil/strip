@@ -246,7 +246,11 @@ public final class WindowObserver {
     /// is in progress); the `leftMouseUp` bracket flushes it. The trailing-edge timer is only a
     /// fallback for gestures with no observed mouse bracket (e.g. keyboard-driven moves).
     private func handleGeometryNotification(id: CGWindowID, wasResize: Bool) {
-        if isAnimatorDriving?(id) == true { return }
+        // While the button is held we've suspended our own applies, so any geometry change is the
+        // user — record it unconditionally. The `isDriving` filter only matters on the fallback path
+        // (no mouse bracket), where it keeps our own animation writes from arming a flush. Filtering
+        // during a held drag is what dropped quick gestures grabbed within the post-settle grace.
+        if !leftMouseDown, isAnimatorDriving?(id) == true { return }
         pendingDrags[id] = (pendingDrags[id] ?? false) || wasResize
         guard !leftMouseDown else { return }
         scheduleFlush(after: dragDebounce)
