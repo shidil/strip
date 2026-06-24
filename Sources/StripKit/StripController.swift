@@ -27,10 +27,18 @@ public final class StripController {
     /// a focus ring as it animates; `nil` hides the ring.
     public var onFocusFrame: ((CGRect?) -> Void)?
 
+    /// Whether the focus ring (the border drawn around the focused window) is shown. Toggled from the
+    /// status-bar menu and persisted. When `false` we forward `nil` frames so the overlay hides the
+    /// ring at its source — the animator keeps reporting frames, we just swallow them.
+    public private(set) var focusRingEnabled = true
+
     public init() {
         self.state = StripState(cols: 3, emphasis: .focus, focusSlot: .C)
         self.screen = NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
-        animator.onFocusFrame = { [weak self] frame in self?.onFocusFrame?(frame) }
+        animator.onFocusFrame = { [weak self] frame in
+            guard let self else { return }
+            self.onFocusFrame?(self.focusRingEnabled ? frame : nil)
+        }
         animator.onWindowLost = { [weak self] id in self?.dropLostWindow(id) }
         restoreSettings()
     }
@@ -48,13 +56,30 @@ public final class StripController {
             springIndex = s.springIndex
             animator.config = SpringConfig.presets[springIndex]
         }
-        Log.line("restored settings: \(state.cols)-up, focusRatio \(String(format: "%.2f", state.config.focusRatio)), height \(String(format: "%.2f", state.config.heightFraction))")
+        focusRingEnabled = s.focusRingEnabled
+        Log.line("restored settings: \(state.cols)-up, focusRatio \(String(format: "%.2f", state.config.focusRatio)), height \(String(format: "%.2f", state.config.heightFraction)), ring \(focusRingEnabled ? "on" : "off")")
     }
 
     /// Persist the current sizing knobs and layout posture.
     private func persist() {
         PersistedSettings(config: state.config, cols: state.cols,
-                          emphasisEqual: state.emphasis == .equal, springIndex: springIndex).save()
+                          emphasisEqual: state.emphasis == .equal, springIndex: springIndex,
+                          focusRingEnabled: focusRingEnabled).save()
+    }
+
+    /// Show or hide the focus ring (status-bar toggle). Persists, then refreshes the overlay
+    /// immediately: re-emitting the focused window's current frame turns it back on, while `nil`
+    /// hides it — neither touches managed windows.
+    public func setFocusRing(_ enabled: Bool) {
+        guard enabled != focusRingEnabled else { return }
+        focusRingEnabled = enabled
+        Log.line("focus ring: \(enabled ? "on" : "off")")
+        persist()
+        if enabled {
+            animator.reemitFocusFrame()
+        } else {
+            onFocusFrame?(nil)
+        }
     }
 
     public var managedCount: Int { state.ring.count }

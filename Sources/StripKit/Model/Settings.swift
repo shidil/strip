@@ -11,8 +11,33 @@ struct PersistedSettings: Codable, Equatable {
     var cols: Int
     var emphasisEqual: Bool
     var springIndex: Int
+    /// Whether the focus ring (the border drawn around the focused window) is shown. Toggled from the
+    /// status-bar menu. Declared last with a default so older blobs (and the existing call sites that
+    /// omit it) keep working via the memberwise init.
+    var focusRingEnabled: Bool = true
 
     private static let key = "strip.settings.v1"
+
+    init(config: LayoutConfig, cols: Int, emphasisEqual: Bool, springIndex: Int,
+         focusRingEnabled: Bool = true) {
+        self.config = config
+        self.cols = cols
+        self.emphasisEqual = emphasisEqual
+        self.springIndex = springIndex
+        self.focusRingEnabled = focusRingEnabled
+    }
+
+    /// Decode tolerantly so a blob written before `focusRingEnabled` existed still loads — the missing
+    /// flag falls back to its default (`true`) rather than failing the whole decode (which would
+    /// silently wipe a user's settings). Mirrors `LayoutConfig`'s forward-compatible decode.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        config = try c.decodeIfPresent(LayoutConfig.self, forKey: .config) ?? .default
+        cols = try c.decodeIfPresent(Int.self, forKey: .cols) ?? 3
+        emphasisEqual = try c.decodeIfPresent(Bool.self, forKey: .emphasisEqual) ?? false
+        springIndex = try c.decodeIfPresent(Int.self, forKey: .springIndex) ?? 0
+        focusRingEnabled = try c.decodeIfPresent(Bool.self, forKey: .focusRingEnabled) ?? true
+    }
 
     /// Load the saved settings, or nil if none have been written yet (or decoding fails).
     static func load(from defaults: UserDefaults = .standard) -> PersistedSettings? {

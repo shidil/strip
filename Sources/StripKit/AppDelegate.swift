@@ -138,6 +138,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             #selector(toggleRelease), "")
 
         menu.addItem(.separator())
+        let ring = add(menu, "Show focus ring", #selector(toggleFocusRing), "")
+        ring.state = controller.focusRingEnabled ? .on : .off
+
+        menu.addItem(.separator())
         add(menu, "Overview", #selector(toggleOverview), "")
         add(menu, "Keyboard help…", #selector(toggleHelp), "/")
 
@@ -147,10 +151,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    private func add(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String) {
+    @discardableResult
+    private func add(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
         menu.addItem(item)
+        return item
     }
 
     // MARK: - Menu actions
@@ -165,6 +171,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func slideNext() { controller.rotate(1) }
     @objc private func togglePin() { controller.togglePin() }
     @objc private func toggleRelease() { controller.releaseAll(); rebuildMenu() }
+    @objc private func toggleFocusRing() { controller.setFocusRing(!controller.focusRingEnabled); rebuildMenu() }
     @objc private func toggleOverview() { overlay.toggleOverview() }
     @objc private func toggleHelp() { overlay.toggleHelp() }
     @objc private func quit() { NSApp.terminate(nil) }

@@ -205,6 +205,10 @@ public final class WindowAnimator: NSObject {
         if allSettled { stop() }
     }
 
+    /// Re-report the focused window's current frame on demand — used when the focus ring is toggled
+    /// back on while motion is settled (no tick would otherwise fire to place it).
+    public func reemitFocusFrame() { emitFocusFrame() }
+
     /// Report the focused window's current animated frame (or its target once settled) to `onFocusFrame`.
     private func emitFocusFrame() {
         guard let id = focusedID, let e = entries[id] else { onFocusFrame?(nil); return }
