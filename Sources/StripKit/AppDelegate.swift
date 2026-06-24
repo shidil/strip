@@ -33,6 +33,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.start()
         // Auto-react (M6): re-tile whenever windows/apps come and go, debounced into one reconcile.
         observer.onReconcile = { [weak self] in self?.controller.refreshAndApply() }
+        // Respect user drags (M7): tell user moves/resizes from the animator's own writes, and act on
+        // a finished drag — snap back, or keep the dominant window's resize.
+        observer.isAnimatorDriving = { [weak self] id in self?.controller.isDriving(id) ?? false }
+        observer.onUserDrag = { [weak self] id, wasResize in
+            self?.controller.handleUserDrag(id: id, wasResize: wasResize)
+        }
         observer.start()
         rebuildMenu()
     }

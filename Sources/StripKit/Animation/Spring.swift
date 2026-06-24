@@ -25,6 +25,11 @@ public struct SpringConfig {
     public static let glide = SpringConfig.critical(110, name: "Glide")
 
     public static let presets: [SpringConfig] = [.track, .pop, .glide]
+
+    /// Crisp, fast, no-overshoot return used for snapping a hand-dragged window back to its slot
+    /// (M7). Not in `presets` — it overrides the user's film-slide feel only for that one motion, so
+    /// the snap-back lands quickly instead of drifting under a soft/bouncy preset.
+    public static let snapBack = SpringConfig.critical(340, name: "SnapBack")
 }
 
 /// A single scalar driven toward a target by a spring (semi-implicit Euler integration).

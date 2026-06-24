@@ -338,6 +338,51 @@ public final class StripController {
         apply()
     }
 
+    // MARK: - Respect user drags (M7 Slice 4)
+
+    /// Whether the animator is currently driving `id` — the window observer consults this so the
+    /// `AXMoved`/`AXResized` our own frame writes generate don't read as user drags.
+    public func isDriving(_ id: CGWindowID) -> Bool { animator.isDriving(id) }
+
+    /// Handle a finished user drag of window `id` (the window observer has already debounced to the
+    /// trailing edge and confirmed it wasn't our own write).
+    ///
+    /// Policy (locked): a **move** of any tiled window, or a **resize of a non-dominant** window,
+    /// snaps back to its slot — re-absorbing keeps the strip coherent. A **resize of the dominant
+    /// (emphasized) window** is *kept* by mapping its new frame into the sizing knobs (width →
+    /// `focusRatio`/`monocleWidthFraction`, height → `heightFraction`) so the whole strip
+    /// re-proportions — honoring the resize fights macOS less than yanking it back.
+    ///
+    /// Either way the window physically moved behind the animator's back, so its `spring.current` is
+    /// stale; we `forget` it before re-applying so it glides from where the user left it rather than
+    /// no-op'ing (move) or jumping from its old slot first (resize) — the Slice-1 lesson.
+    public func handleUserDrag(id: CGWindowID, wasResize: Bool) {
+        guard !isSuspended, state.ring.contains(id), let w = windowsById[id] else { return }
+
+        if wasResize, id == dominantWindowId(), let live = w.ax.frame {
+            let vis = screen.quartzVisibleFrame
+            state.config = DragResolver.resizeConfig(focusFrame: live, vis: vis, cols: state.cols,
+                                                     emphasis: state.emphasis, base: state.config)
+            Log.line("user-resize kept: focusRatio \(String(format: "%.2f", state.config.focusRatio)), monocle \(String(format: "%.2f", state.config.monocleWidthFraction)), height \(String(format: "%.2f", state.config.heightFraction))")
+            persist()
+        } else {
+            Log.line("user-drag: window \(id) snapped back to slot")
+        }
+
+        // Return crisply (snap-back spring), gliding from where the user let go (forget → re-seat
+        // from the live frame) rather than no-op'ing on a stale spring.
+        animator.forget(id)
+        animator.requestSnapBack()
+        apply()
+    }
+
+    /// The window whose width the size knobs govern — the emphasized slot's occupant: `.C` in monocle
+    /// and 3-up, the focused slot in 2-up (mirrors `SlotGeometry`'s emphasized-slot choice).
+    private func dominantWindowId() -> CGWindowID? {
+        let emphasized: Slot = state.cols == 2 ? state.focusSlot : .C
+        return StripLayout(state).assignment()[emphasized]
+    }
+
     // MARK: - Release / suspend (M7 escape hatch)
 
     /// Toggle the release-all escape hatch (⌃⌥0). When engaging, un-park every managed window that
