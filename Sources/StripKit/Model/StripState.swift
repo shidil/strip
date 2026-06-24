@@ -25,15 +25,19 @@ public struct StripState {
     public var pins: [Slot: CGWindowID]
     /// The slot that currently has keyboard focus.
     public var focusSlot: Slot
+    /// Tunable window-sizing knobs (padding, gaps, focus width ratio) — see `LayoutConfig`.
+    public var config: LayoutConfig
 
     public init(ring: [CGWindowID] = [], centerId: CGWindowID? = nil, cols: Int = 3,
-                emphasis: Emphasis = .focus, pins: [Slot: CGWindowID] = [:], focusSlot: Slot = .C) {
+                emphasis: Emphasis = .focus, pins: [Slot: CGWindowID] = [:], focusSlot: Slot = .C,
+                config: LayoutConfig = .default) {
         self.ring = ring
         self.centerId = centerId
         self.cols = cols
         self.emphasis = emphasis
         self.pins = pins
         self.focusSlot = focusSlot
+        self.config = config
     }
 
     /// The slot keys present for the current column count (`slotKeysFor`, prototype line 162).

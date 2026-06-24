@@ -11,6 +11,12 @@ public enum HotkeyCommand {
     case toggleEmphasis                // e
     case cycleTransition               // t
     case togglePin                     // p   (M3)
+    case focusWider                    // =   widen the focused window
+    case focusNarrower                 // -   narrow the focused window
+    case taller                        // ↑   grow window height
+    case shorter                       // ↓   shrink window height
+    case gapTighter                    // [   smaller gaps/padding
+    case gapLooser                     // ]   larger gaps/padding
     case toggleOverview                // Space (M5)
     case toggleHelp                    // ?   (M4)
     case overview(OverviewKey)         // arrows / h j k l / Enter / Esc — only while overview is open
@@ -95,6 +101,12 @@ public final class HotkeyService {
         case kVK_ANSI_E: return .toggleEmphasis
         case kVK_ANSI_T: return .cycleTransition
         case kVK_ANSI_P: return .togglePin
+        case kVK_ANSI_Equal:  return .focusWider
+        case kVK_ANSI_Minus:  return .focusNarrower
+        case kVK_UpArrow:     return .taller
+        case kVK_DownArrow:   return .shorter
+        case kVK_ANSI_LeftBracket:  return .gapTighter
+        case kVK_ANSI_RightBracket: return .gapLooser
         case kVK_Space:  return .toggleOverview
         case kVK_ANSI_Slash: return .toggleHelp   // ⌃⌥/  (the "?" key)
         default: return nil
@@ -148,6 +160,10 @@ private let kVK_ANSI_T = 0x11
 private let kVK_ANSI_1 = 0x12
 private let kVK_ANSI_2 = 0x13
 private let kVK_ANSI_3 = 0x14
+private let kVK_ANSI_Equal = 0x18
+private let kVK_ANSI_Minus = 0x1B
+private let kVK_ANSI_LeftBracket  = 0x21
+private let kVK_ANSI_RightBracket = 0x1E
 private let kVK_Tab    = 0x30
 private let kVK_Space  = 0x31
 private let kVK_ANSI_Slash = 0x2C

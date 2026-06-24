@@ -1,61 +1,66 @@
 import CoreGraphics
 
-/// Slot geometry, ported verbatim from the prototype's `geom()` (`Strip Window Manager.dc.html`,
-/// lines 165-179). The prototype lays out on a fixed 1440×900 "stage" and scales the whole stage to
-/// fit the viewport (letterboxing). For a real window manager we instead re-express every value as a
-/// **fraction of the active display's visible frame**, so the strip fills the screen — including
-/// ultrawides — rather than letterboxing. The pixel constants below are kept exactly as the
-/// prototype wrote them and divided by the stage size at projection time, so the proportions are
-/// faithful by construction.
+/// Computes the concrete slot rectangles for a layout, driven by a `LayoutConfig`.
+///
+/// This replaces the prototype's fixed 1440×900 "stage" boxes (which were tuned for a demo aesthetic
+/// and left big wallpaper margins on a real ultrawide). Windows now **fill the full usable height**
+/// and **span the usable width edge-to-edge** — with configurable outer padding and inter-window
+/// gaps — and `focus` emphasis distributes width by `config.focusRatio`. Output is in Quartz
+/// coordinates (top-left origin, Y down — what the AX API uses).
 enum SlotGeometry {
-    static let stageW: CGFloat = 1440
-    static let stageH: CGFloat = 900
-    /// Vertical center of every window on the stage (`baseY`, prototype line 209).
-    static let baseCY: CGFloat = 454
+    /// Ordered, on-screen slot rects for `cols`/`emphasis`/`focusSlot` within the visible frame `vis`.
+    static func rects(cols: Int, emphasis: Emphasis, focusSlot: Slot, in vis: CGRect,
+                      config: LayoutConfig) -> [Slot: CGRect] {
+        let pad = max(0, config.outerPadding)
+        let gap = max(0, config.innerGap)
+        let usableH = max(0, vis.height - 2 * pad)
+        // Height fraction shrinks every window vertically, centered within the usable height.
+        let height = config.clampedHeight * usableH
+        let top = vis.minY + pad + (usableH - height) / 2
+        let usableW = max(0, vis.width - 2 * pad)
 
-    /// A slot box in stage units: horizontal center `cx`, width `w`, height `h`.
-    struct Box {
-        var cx: CGFloat, w: CGFloat, h: CGFloat
-        init(_ cx: CGFloat, _ w: CGFloat, _ h: CGFloat) { self.cx = cx; self.w = w; self.h = h }
-    }
-
-    /// Stage-unit boxes per slot for the given layout (faithful port of `geom()`).
-    static func boxes(cols: Int, emphasis: Emphasis, focusSlot: Slot) -> [Slot: Box] {
-        switch cols {
-        case 1:
-            return [.C: Box(720, 1000, 724)]
-        case 3:
-            if emphasis == .focus {
-                return [.L: Box(190, 300, 556), .C: Box(720, 716, 690), .R: Box(1250, 300, 556)]
-            } else {
-                return [.L: Box(282, 420, 636), .C: Box(720, 420, 636), .R: Box(1158, 420, 636)]
-            }
-        default: // 2-up
-            if emphasis == .focus {
-                if focusSlot == .R {
-                    return [.L: Box(328, 380, 560), .R: Box(922, 760, 690)]
-                } else {
-                    return [.L: Box(518, 760, 690), .R: Box(1112, 380, 560)]
-                }
-            } else {
-                return [.L: Box(398, 620, 666), .R: Box(1042, 620, 666)]
-            }
+        // Monocle: a single window centered with margins on both sides (full-width is too wide to use
+        // on an ultrawide). `monocleWidthFraction` controls how much it fills, up to 1.0 ("filled").
+        if cols == 1 {
+            let w = config.clampedMonocleWidth * usableW
+            return [.C: CGRect(x: vis.midX - w / 2, y: top, width: w, height: height)]
         }
+
+        let slots: [Slot]
+        switch cols {
+        case 2:  slots = [.L, .R]
+        default: slots = [.L, .C, .R]
+        }
+        let n = slots.count
+        // Width available for the windows themselves, once the inter-window gaps are removed.
+        let windowArea = max(0, usableW - CGFloat(n - 1) * gap)
+
+        // The emphasized (wide) slot: in 2-up it's the focused slot; otherwise the center anchor.
+        let rawEmphasis: Slot = (cols == 2) ? focusSlot : .C
+        let emphasized = slots.contains(rawEmphasis) ? rawEmphasis : (slots.first ?? .C)
+
+        var widths: [Slot: CGFloat] = [:]
+        if emphasis == .focus && n > 1 {
+            let fr = config.clampedFocusRatio
+            let focusW = fr * windowArea
+            let sideW = (1 - fr) * windowArea / CGFloat(n - 1)
+            for s in slots { widths[s] = (s == emphasized ? focusW : sideW) }
+        } else {
+            for s in slots { widths[s] = windowArea / CGFloat(n) }
+        }
+
+        // Lay the slots out left-to-right with gaps between them.
+        var rects: [Slot: CGRect] = [:]
+        var x = vis.minX + pad
+        for s in slots {
+            let w = widths[s] ?? windowArea / CGFloat(n)
+            rects[s] = CGRect(x: x, y: top, width: w, height: height)
+            x += w + gap
+        }
+        return rects
     }
 
-    /// Project a stage-unit box into a concrete rect within the display's visible frame
-    /// (Quartz coordinates: top-left origin, Y down). Width scales by the visible width, height by
-    /// the visible height, independently — so the layout adapts to any aspect ratio.
-    static func rect(_ box: Box, in vis: CGRect) -> CGRect {
-        let w = box.w / stageW * vis.width
-        let h = box.h / stageH * vis.height
-        let cx = vis.minX + box.cx / stageW * vis.width
-        let cy = vis.minY + baseCY / stageH * vis.height
-        return CGRect(x: cx - w / 2, y: cy - h / 2, width: w, height: h)
-    }
-
-    /// Vertical center line of the strip within `vis` (Quartz).
-    static func centerY(in vis: CGRect) -> CGFloat {
-        vis.minY + baseCY / stageH * vis.height
-    }
+    /// Vertical center line of the strip within `vis` (used to vertically center parked windows).
+    /// With full-height windows the strip is simply centered in the visible frame.
+    static func centerY(in vis: CGRect) -> CGFloat { vis.midY }
 }

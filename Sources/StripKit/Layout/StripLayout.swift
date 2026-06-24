@@ -90,10 +90,9 @@ public struct StripLayout {
     /// Target placement for every window in the ring, within `vis` (Quartz coordinates).
     public func placements(in vis: CGRect) -> [WindowPlacement] {
         let r = resolve()
-        // geom() uses the raw state.focusSlot (prototype line 166).
-        let boxes = SlotGeometry.boxes(cols: state.cols, emphasis: state.emphasis,
-                                       focusSlot: state.focusSlot)
-        let focusSlotIndex = r.slots.firstIndex(of: r.focusSlot) ?? 0
+        // geom() uses the raw state.focusSlot (prototype line 166); sizing comes from state.config.
+        let rects = SlotGeometry.rects(cols: state.cols, emphasis: state.emphasis,
+                                       focusSlot: state.focusSlot, in: vis, config: state.config)
         let centerY = SlotGeometry.centerY(in: vis)
 
         return state.ring.map { id in
@@ -102,36 +101,35 @@ public struct StripLayout {
             var inSlot: Slot? = nil
             var parked = false
 
-            if let ps = pinnedSlot, let box = boxes[ps] {
-                frame = SlotGeometry.rect(box, in: vis)
+            if let ps = pinnedSlot, let rect = rects[ps] {
+                frame = rect
                 inSlot = ps
             } else {
                 let up = r.unpinned.firstIndex(of: id) ?? 0
                 var d = posMod(up - r.centerPos, r.m)
                 if Double(d) > Double(r.m) / 2 { d -= r.m }
                 let t = r.anchorIdx + d
-                if t >= 0, t < r.unpinnedSlots.count, let box = boxes[r.unpinnedSlots[t]] {
-                    frame = SlotGeometry.rect(box, in: vis)
+                if t >= 0, t < r.unpinnedSlots.count, let rect = rects[r.unpinnedSlots[t]] {
+                    frame = rect
                     inSlot = r.unpinnedSlots[t]
                 } else {
                     parked = true
-                    frame = parkedFrame(t: t, resolved: r, boxes: boxes, vis: vis, centerY: centerY)
+                    frame = parkedFrame(t: t, resolved: r, rects: rects, vis: vis, centerY: centerY)
                 }
             }
 
             let active = inSlot != nil && inSlot == r.focusSlot
-            _ = focusSlotIndex // (kept for parity with prototype; not needed without 3D transforms)
             return WindowPlacement(id: id, frame: frame, active: active, parked: parked, slot: inSlot)
         }
     }
 
     /// A parked window is pushed entirely off the nearest edge so it can later slide back in.
     /// Sized like the end slot it parks behind (prototype parks behind the first/last slot).
-    private func parkedFrame(t: Int, resolved r: Resolved, boxes: [Slot: SlotGeometry.Box],
+    private func parkedFrame(t: Int, resolved r: Resolved, rects: [Slot: CGRect],
                              vis: CGRect, centerY: CGFloat) -> CGRect {
         let dir: CGFloat = t < 0 ? -1 : 1
         let endSlot = t < 0 ? r.unpinnedSlots.first : r.unpinnedSlots.last
-        let size = endSlot.flatMap { boxes[$0] }.map { SlotGeometry.rect($0, in: vis).size }
+        let size = endSlot.flatMap { rects[$0] }?.size
             ?? CGSize(width: vis.width * 0.2, height: vis.height * 0.6)
         let x = dir < 0 ? vis.minX - size.width - Self.parkGap : vis.maxX + Self.parkGap
         return CGRect(x: x, y: centerY - size.height / 2, width: size.width, height: size.height)

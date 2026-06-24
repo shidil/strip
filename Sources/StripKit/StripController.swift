@@ -26,6 +26,29 @@ public final class StripController {
         self.state = StripState(cols: 3, emphasis: .focus, focusSlot: .C)
         self.screen = NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
         animator.onFocusFrame = { [weak self] frame in self?.onFocusFrame?(frame) }
+        restoreSettings()
+    }
+
+    // MARK: - Persistence
+
+    /// Restore the saved sizing knobs and layout posture (window identity is re-discovered, not saved).
+    private func restoreSettings() {
+        guard let s = PersistedSettings.load() else { return }
+        state.config = s.config
+        state.cols = s.cols
+        state.emphasis = s.emphasisEqual ? .equal : .focus
+        state.clampToValidSlots()
+        if SpringConfig.presets.indices.contains(s.springIndex) {
+            springIndex = s.springIndex
+            animator.config = SpringConfig.presets[springIndex]
+        }
+        Log.line("restored settings: \(state.cols)-up, focusRatio \(String(format: "%.2f", state.config.focusRatio)), height \(String(format: "%.2f", state.config.heightFraction))")
+    }
+
+    /// Persist the current sizing knobs and layout posture.
+    private func persist() {
+        PersistedSettings(config: state.config, cols: state.cols,
+                          emphasisEqual: state.emphasis == .equal, springIndex: springIndex).save()
     }
 
     public var managedCount: Int { state.ring.count }
@@ -83,11 +106,13 @@ public final class StripController {
         if !keys.contains(state.focusSlot) { state.focusSlot = state.primarySlot }
         normalize()
         apply()
+        persist()
     }
 
     public func setEmphasis(_ e: Emphasis) {
         state.emphasis = e
         apply()
+        persist()
     }
 
     public func toggleEmphasis() {
@@ -102,6 +127,7 @@ public final class StripController {
         let cfg = SpringConfig.presets[springIndex]
         setSpring(cfg)
         Log.line("spring feel: \(cfg.name)")
+        persist()
     }
 
     /// Slide the film: bring the previous/next window to center (`rotate`, prototype lines 334-340).
@@ -144,6 +170,43 @@ public final class StripController {
     public func setCenter(_ id: CGWindowID) {
         state.setCenter(id)
         apply()
+    }
+
+    /// Live window-sizing knobs (⌃⌥-/= widen/narrow the focus window; ⌃⌥[ /] tighten/loosen gaps).
+
+    /// Widen/narrow the dominant window by `delta`. In monocle this grows the centered window toward
+    /// a filled screen; in 2-/3-up it shifts the focus window's width share. Both clamped.
+    public func adjustFocusRatio(_ delta: CGFloat) {
+        if state.cols == 1 {
+            state.config.monocleWidthFraction += delta
+            state.config.monocleWidthFraction = state.config.clampedMonocleWidth
+            Log.line("monocle width: \(String(format: "%.2f", state.config.monocleWidthFraction))")
+        } else {
+            state.config.focusRatio += delta
+            state.config.focusRatio = state.config.clampedFocusRatio
+            Log.line("focus ratio: \(String(format: "%.2f", state.config.focusRatio))")
+        }
+        apply()
+        persist()
+    }
+
+    /// Grow/shrink every window's height by `delta` (clamped to `LayoutConfig.heightRange`); windows
+    /// stay vertically centered, gaining margin top and bottom as they shrink.
+    public func adjustHeight(_ delta: CGFloat) {
+        state.config.heightFraction += delta
+        state.config.heightFraction = state.config.clampedHeight
+        Log.line("height: \(String(format: "%.2f", state.config.heightFraction))")
+        apply()
+        persist()
+    }
+
+    /// Nudge the inter-window gap and outer padding together by `delta` (floored at 0).
+    public func adjustGap(_ delta: CGFloat) {
+        state.config.innerGap = max(0, state.config.innerGap + delta)
+        state.config.outerPadding = max(0, state.config.outerPadding + delta)
+        Log.line("gap: \(Int(state.config.innerGap)) pad: \(Int(state.config.outerPadding))")
+        apply()
+        persist()
     }
 
     // MARK: - Apply to real windows

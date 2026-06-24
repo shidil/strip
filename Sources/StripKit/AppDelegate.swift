@@ -46,6 +46,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         case .toggleEmphasis: controller.toggleEmphasis()
         case .cycleTransition: controller.cycleSpring()
         case .togglePin: controller.togglePin()
+        case .focusWider: controller.adjustFocusRatio(+0.05)
+        case .focusNarrower: controller.adjustFocusRatio(-0.05)
+        case .taller: controller.adjustHeight(+0.05)
+        case .shorter: controller.adjustHeight(-0.05)
+        case .gapTighter: controller.adjustGap(-4)
+        case .gapLooser: controller.adjustGap(+4)
         case .toggleHelp: overlay.toggleHelp()
         case .toggleOverview: overlay.toggleOverview()
         case .overview(let key):
