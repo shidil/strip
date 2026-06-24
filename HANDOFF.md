@@ -95,9 +95,42 @@ open/close and app launch/quit with no hotkey, debounced into one reconcile, no 
 **Acceptance:** open/close windows + launch/quit apps with no manual re-tile and no flicker storms;
 dialogs/palettes/non-resizable windows are left alone.
 
-### M7 — Resilience & escape hatch (won't strand you)
+### M7 — Resilience & escape hatch (won't strand you)  ← START HERE
 
 Auto-react means Strip is always touching your windows, so failure modes now matter.
+
+#### Start-here checklist (new session)
+
+1. **Orient (5 min):** read this M7 section + `CLAUDE.md`; run `mem_context` for project `wm` to
+   recover the M6 design and gotchas. Then **plan before coding** (the author reviews plans first).
+2. **Trust the build, not the editor:** `swift test` and `make bundle` are authoritative — the
+   post-edit SourceKit "cannot find X" diagnostics in this repo are stale/false; don't chase them.
+   Run live with `make open` (a shell-run binary isn't AX-trusted); observe with `cat /tmp/strip.log`.
+   Live behavior needs the author's screen — a headless agent's startup reconcile finds no windows.
+3. **The crux is the move/resize feedback loop** (see *Respect user drags* below). Do this design
+   first; the other three items are smaller and independent.
+4. **Seams to touch:**
+   - `WindowObserver.swift` — currently does **not** subscribe to `kAXMovedNotification` /
+     `kAXResizedNotification` (deliberately, to avoid storming on the animator's own writes). Adding
+     them is where *respect-user-drags* starts. The notification list is `Self.notifications`.
+   - `WindowAnimator` — the **only** thing that writes window frames. It must expose "I am currently
+     moving window X" so the observer can tell animator-initiated `AXMoved`/`AXResized` from a user
+     drag. Without this guard, observing move/resize is a reconcile storm (the M6 reason it was left
+     out). Likely a per-window "settling until" timestamp or an in-flight id set the observer checks.
+   - `StripController` — owns the ring + `refreshAndApply()`. Release-all and AX-drop recovery hook
+     here; `apply()` is where AX-write failures surface.
+   - `AppDelegate` — wire the release-all hotkey/menu and `applicationWillTerminate` un-park.
+   - `HotkeyService` — add the release-all chord (⌃⌥0; `kVK_ANSI_0`), mirroring the existing sizing
+     keys' wiring (enum case → chord switch → `AppDelegate.handle`).
+5. **Suggested slice order** (each is shippable + testable on its own): release-all → un-park-on-quit
+   → AX-drop recovery → respect-user-drags (last; it's the hardest and benefits from the others).
+6. **Acceptance:** drag/resize a tiled window by hand and Strip either re-absorbs it cleanly or
+   leaves it floating — it does **not** fight you or storm; quitting Strip leaves every window
+   on-screen; a crashed/relaunched app's stale windows drop out instead of wedging the animator;
+   ⌃⌥0 releases everything to sane on-screen frames.
+
+#### Work items
+
 - **Release-all** (hotkey + menu, e.g. ⌃⌥0): unmanage everything and un-park to sensible on-screen
   frames. An explicit "let go."
 - **Quit/crash safety**: on `applicationWillTerminate`, un-park all parked windows back on-screen so a
