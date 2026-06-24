@@ -100,6 +100,21 @@ final class StripStateTests: XCTestCase {
         XCTAssertTrue(s.ring.contains(99))
     }
 
+    func testNewWindowOpensRightOfFocusInTheFilm() {
+        // The new window should be inserted into the ring *right after* the currently-focused window
+        // and centered, so the previous focus flows into the slot immediately to its left and the
+        // film stays contiguous (rather than the new window landing at the far end).
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .R)
+        let oldFocus = assignment(s)[.R]!            // the window currently focused (in R)
+        s.insertManaged(99, placement: .focusCenter)
+
+        XCTAssertEqual(assignment(s)[.C], 99, "new window centers")
+        XCTAssertEqual(s.focusSlot, .C, "and takes focus")
+        XCTAssertEqual(assignment(s)[.L], oldFocus, "previous focus flows to the slot left of it")
+        let fi = s.ring.firstIndex(of: oldFocus)!
+        XCTAssertEqual(s.ring[fi + 1], 99, "new window sits right after the focused window in the film")
+    }
+
     func testNewWindowLandsRightWhenCenterIsPinned() {
         // Pin C; the next preference (right) should receive the new window, leaving the pin intact.
         var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, pins: [.C: 4])
@@ -141,6 +156,30 @@ final class StripStateTests: XCTestCase {
         s.insertManaged(4, placement: .focusCenter) // 4 already in the ring
         XCTAssertEqual(s.ring, before.ring, "re-inserting an existing window is a no-op")
         XCTAssertEqual(s.centerId, before.centerId)
+    }
+
+    // MARK: - Closing the centered window (successor pick, M6)
+
+    func testClosingCenteredWindowFallsToLeftNeighbor() {
+        // L=2, C=3 (centered), R=4. Close 3 → center should become 2 (the left neighbor), not the
+        // start of the film (1).
+        let old = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .C)
+        XCTAssertEqual(assignment(old)[.L], 2)
+        let survivors: Set<CGWindowID> = [1, 2, 4, 5, 6, 7] // 3 closed
+        XCTAssertEqual(StripController.neighborOfClosedCenter(in: old, survivors: survivors), 2)
+    }
+
+    func testClosingCenteredWindowFallsToRightWhenLeftAlsoGone() {
+        let old = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .C)
+        let survivors: Set<CGWindowID> = [1, 4, 5, 6, 7] // both 2 (left) and 3 (center) closed
+        XCTAssertEqual(StripController.neighborOfClosedCenter(in: old, survivors: survivors), 4,
+                       "falls to the right neighbor when the left one is also gone")
+    }
+
+    func testClosingCenteredWindowReturnsNilWhenNoFlankSurvives() {
+        // Only the centered window had neighbors and they're all gone (monocle has no flanks).
+        let old = StripState(ring: [3], centerId: 3, cols: 1)
+        XCTAssertNil(StripController.neighborOfClosedCenter(in: old, survivors: []))
     }
 
     // MARK: - Edge cases

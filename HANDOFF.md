@@ -58,9 +58,15 @@ open/close and app launch/quit with no hotkey, debounced into one reconcile, no 
   it at the film's end. Customizable via `LayoutConfig.newWindowPlacement` (persisted; tolerant
   decoder so the new knob doesn't wipe old saved settings). `refresh()` only applies the policy to
   windows that appear *while running* — initial population lays out in on-screen order.
+  In the center-free case the new window is inserted into the film **right after the currently-
+  focused window** (niri-style) so it opens next to your context and the film stays contiguous,
+  rather than landing at the far end of the ring; the previous focus flows into the slot to its left.
+  (Ring reorder shared via `StripState.reorderedRing`, which preserves pin slots.)
 
-**Still open from M6 scope (minor):** when the *centered* window closes, center currently falls to
-`ring.first` rather than the nearest neighbor — fine, but a nicer neighbor-pick is a small follow-up.
+- **Closing the centered window** hands the center to the window that flanked it — left slot first,
+  then right (`StripController.neighborOfClosedCenter`, pure + tested) — so closing the focused
+  window returns you to your previous context instead of snapping to the start of the film. Falls
+  back to `ring.first` only when no flank survives.
 
 #### Original plan (kept for reference)
 

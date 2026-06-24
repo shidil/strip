@@ -107,10 +107,12 @@ public struct StripState {
     ///
     /// `.append` drops it at the end of the ring, out of the way, without stealing focus.
     /// `.focusCenter` brings it to the preferred *unpinned* slot — center, else right, else left —
-    /// and gives that slot keyboard focus. The common case (center slot free) simply makes the new
-    /// window the centered window; when the center slot is pinned it lands in the next preferred
-    /// slot by inserting into the unpinned sequence at the offset `resolve()` maps to that slot,
-    /// leaving the pinned window untouched.
+    /// and gives that slot keyboard focus. In the common case (center slot free) the new window is
+    /// inserted into the film **right after the currently-focused window** and made the center, so
+    /// it opens next to your working context (niri-style) rather than stranded at the film's end;
+    /// the previously-focused window flows into the slot immediately to its left. When the center
+    /// slot is pinned the new window lands in the next preferred slot by inserting into the unpinned
+    /// sequence at the offset `resolve()` maps to that slot, leaving the pinned window untouched.
     public mutating func insertManaged(_ id: CGWindowID, placement: NewWindowPlacement) {
         guard !ring.contains(id) else { return }
 
@@ -135,9 +137,16 @@ public struct StripState {
         // the first unpinned slot.
         let anchorSlot = unpinnedSlots.contains(primarySlot) ? primarySlot : (unpinnedSlots.first ?? primarySlot)
 
-        // Common case: the preferred slot is the anchor → the new window simply becomes the center.
+        // Common case: the preferred slot is the anchor → the new window becomes the center, opened
+        // right after the currently-focused window so the film stays contiguous with your context.
         if target == anchorSlot || unpinned.isEmpty {
-            ring.append(id)            // ring order is irrelevant here; centerId drives the anchor
+            let focusedId = StripLayout(self).assignment()[focusSlot]
+            if let focusedId, let fi = unpinned.firstIndex(of: focusedId) {
+                unpinned.insert(id, at: fi + 1)               // right of focus
+                ring = reorderedRing(unpinned: unpinned, pinnedSet: pinnedSet)
+            } else {
+                ring.append(id)                               // no focus context (e.g. empty strip)
+            }
             centerId = id
             focusSlot = target
             clampToValidSlots()
@@ -151,8 +160,15 @@ public struct StripState {
         let centerPos = centerId.flatMap { unpinned.firstIndex(of: $0) } ?? 0
         let insertAt = max(0, min(unpinned.count, centerPos + (targetIdx - anchorIdx)))
         unpinned.insert(id, at: insertAt)
+        ring = reorderedRing(unpinned: unpinned, pinnedSet: pinnedSet)
+        focusSlot = target
+        clampToValidSlots()
+    }
 
-        // Rebuild the ring: pinned ids hold their positions; unpinned positions take the new order.
+    /// Rebuild the ring so its unpinned subsequence equals `unpinned` (in order) while pinned
+    /// windows keep their original ring positions. (`resolve()` only cares about the relative order
+    /// of unpinned ids, so this preserves pin slots while reordering the film.)
+    private func reorderedRing(unpinned: [CGWindowID], pinnedSet: Set<CGWindowID>) -> [CGWindowID] {
         var rebuilt: [CGWindowID] = []
         var ui = 0
         for old in ring {
@@ -163,9 +179,7 @@ public struct StripState {
             }
         }
         while ui < unpinned.count { rebuilt.append(unpinned[ui]); ui += 1 }
-        ring = rebuilt
-        focusSlot = target
-        clampToValidSlots()
+        return rebuilt
     }
 
     /// Drop pins on slots that don't exist for the current column count and clamp focus to a valid

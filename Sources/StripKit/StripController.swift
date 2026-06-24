@@ -87,6 +87,7 @@ public final class StripController {
         // opened a window while Strip runs) and get the new-window placement treatment. On the very
         // first scan (or after the strip emptied) we just lay everything out in on-screen order
         // without yanking focus around.
+        let oldState = state
         let wasPopulated = !state.ring.isEmpty
         let kept = state.ring.filter { allById[$0] != nil } // keep existing while they exist
         let known = Set(kept)
@@ -99,13 +100,41 @@ public final class StripController {
             for w in appeared { state.ring.append(w.id) }
         }
 
+        // If the centered window vanished (e.g. you closed it) and no newly-opened window claimed the
+        // center, hand the center to its on-screen neighbor — the window that was to its left, else
+        // its right — so closing the focused window returns you to your previous context rather than
+        // snapping to the start of the film.
         if state.centerId == nil || !state.ring.contains(state.centerId!) {
-            state.centerId = state.ring.first
+            state.centerId = Self.neighborOfClosedCenter(in: oldState, survivors: Set(state.ring))
+                ?? state.ring.first
         }
 
         windowsById = [:]
         for id in state.ring { windowsById[id] = allById[id] }
         normalize()
+    }
+
+    /// When the centered window is gone, pick its replacement from the windows that flanked it: the
+    /// one that was in the slot to its left, then to its right, expanding outward. Pure (operates on
+    /// the pre-reconcile `old` state + the set of `survivors`), so it's unit-testable. Returns nil if
+    /// no flanking window survives — the caller then falls back to the start of the film.
+    static func neighborOfClosedCenter(in old: StripState, survivors: Set<CGWindowID>) -> CGWindowID? {
+        guard let removed = old.centerId else { return nil }
+        let assign = StripLayout(old).assignment()
+        guard let anchorSlot = assign.first(where: { $0.value == removed })?.key,
+              let anchorIdx = old.slots.firstIndex(of: anchorSlot) else { return nil }
+
+        // Visit slots outward from the anchor: immediate left, immediate right, then further out.
+        var order: [Slot] = []
+        var l = anchorIdx - 1, r = anchorIdx + 1
+        while l >= 0 || r < old.slots.count {
+            if l >= 0 { order.append(old.slots[l]); l -= 1 }
+            if r < old.slots.count { order.append(old.slots[r]); r += 1 }
+        }
+        for s in order {
+            if let id = assign[s], id != removed, survivors.contains(id) { return id }
+        }
+        return nil
     }
 
     // MARK: - Layout commands (menu-driven in M1)
