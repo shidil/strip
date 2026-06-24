@@ -1,0 +1,10 @@
+- Film minimap can show app icons instead of first letter chip.
+- Film minimap can show window thumbnail/peviews on hover or hotkey press.
+- Search for windows in overview or spotlight style
+- Reposition minimap 
+- Show button to trigger overview in minimap
+- Change focused slot when using mouse or dock to focus a window
+- Arrange windows from the minimap by dragging them around
+- Vertical window film strip like niri workspaces
+- Swap the focused window with the one in the slot you click on in the minimap when holding a modifier key
+- Swap the focused window to the center or right slot.
