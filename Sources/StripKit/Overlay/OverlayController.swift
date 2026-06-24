@@ -48,6 +48,14 @@ public final class OverlayController {
     /// Invoked with the window id when a rail chip is clicked.
     public var onCenter: ((CGWindowID) -> Void)?
 
+    /// Fired with `true` when the overview opens and `false` when it closes, so the hotkey tap can
+    /// gate its chordless navigation keys to exactly the window the overview is showing.
+    public var onOverviewVisibility: ((Bool) -> Void)?
+
+    /// Keyboard-selection state for the overview. Lives here (not as SwiftUI `@State`) because
+    /// `renderOverview` rebuilds the hosting view on every snapshot, which would reset view state.
+    private let overviewSelection = OverviewSelection()
+
     public init() {
         railHosting = NSHostingView(rootView: AnyView(EmptyView()))
         statusHosting = NSHostingView(rootView: AnyView(EmptyView()))
@@ -132,6 +140,7 @@ public final class OverlayController {
             if let panel = self.overviewPanel {
                 panel.orderOut(nil)
                 self.overviewPanel = nil
+                self.onOverviewVisibility?(false)
                 Log.line("overview: closed")
                 return
             }
@@ -140,6 +149,9 @@ public final class OverlayController {
                 Log.line("overview: no windows to show")
                 return
             }
+            // Start the keyboard selection on the active (focused) window, else the first card.
+            self.overviewSelection.index = snapshot.rail.firstIndex(where: { $0.active }) ?? 0
+            self.onOverviewVisibility?(true)
             Log.line("overview: open — \(snapshot.rail.count) window(s)")
             let panel = Self.makePanel(level: .popUpMenu)
             self.renderOverview(into: panel, snapshot)
@@ -167,12 +179,37 @@ public final class OverlayController {
         }
     }
 
+    /// Move the overview's keyboard selection (arrows / vim h j k l), wrapping at the edges. No-op
+    /// unless the overview is open. Only mutates the selection model — managed windows don't move.
+    public func navigateOverview(_ nav: OverviewNav) {
+        onMain {
+            guard self.overviewPanel != nil, let count = self.lastSnapshot?.rail.count, count > 0 else { return }
+            self.overviewSelection.index = nextOverviewIndex(
+                from: self.overviewSelection.index, count: count, perRow: OverviewView.perRow, nav)
+        }
+    }
+
+    /// Center the keyboard-selected window (same as clicking its card) and dismiss the overview.
+    public func confirmOverview() {
+        onMain {
+            guard self.overviewPanel != nil, let rail = self.lastSnapshot?.rail, !rail.isEmpty else { return }
+            let i = min(max(0, self.overviewSelection.index), rail.count - 1)
+            self.onCenter?(rail[i].id)
+            self.toggleOverview() // close
+        }
+    }
+
     /// (Re)build the overview's SwiftUI content for the given snapshot.
     private func renderOverview(into panel: NSPanel, _ snapshot: OverlaySnapshot) {
+        // Keep the selection in range — the rail count can shrink between renders.
+        if !snapshot.rail.isEmpty {
+            overviewSelection.index = min(max(0, overviewSelection.index), snapshot.rail.count - 1)
+        }
         let hosting = NSHostingView(rootView: AnyView(
             OverviewView(
                 items: snapshot.rail,
                 thumbnails: thumbnails,
+                selection: overviewSelection,
                 onCenter: { [weak self] id in self?.onCenter?(id) },
                 onClose: { [weak self] in self?.toggleOverview() }
             )

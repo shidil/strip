@@ -1,6 +1,7 @@
 CONFIG ?= debug
-APP    := .build/Strip.app
-BIN    := $(APP)/Contents/MacOS/Strip
+APP_NAME := Strip
+APP    := .build/$(APP_NAME).app
+BIN    := $(APP)/Contents/MacOS/$(APP_NAME)
 BUNDLE_ID := com.spike.strip
 SIGN_ID   ?= Strip Dev
 
@@ -19,7 +20,7 @@ setup-signing:
 bundle: build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	cp .build/$(CONFIG)/Strip $(BIN)
+	cp .build/$(CONFIG)/$(APP_NAME) $(BIN)
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	@if security find-identity -p codesigning | grep -q "$(SIGN_ID)"; then \
 		echo "Signing with '$(SIGN_ID)'"; \
@@ -32,11 +33,13 @@ bundle: build
 
 ## Run the bundled binary directly so logs stream to this terminal (bundle identity still applies).
 run: bundle
-	@echo "Launching Strip (Ctrl-C to stop)…"
+	@echo "Launching $(APP_NAME) (Ctrl-C to stop)…"
 	@$(BIN)
 
 ## Launch detached via the app bundle (no streamed logs; use Console.app).
+## Kills any running instance first so the fresh build takes over.
 open: bundle
+	@pkill -x $(APP_NAME) 2>/dev/null && echo "Killed running $(APP_NAME)" || true
 	open $(APP)
 
 ## Unit tests for the pure layout engine.

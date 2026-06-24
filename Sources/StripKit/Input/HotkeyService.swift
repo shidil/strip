@@ -13,6 +13,15 @@ public enum HotkeyCommand {
     case togglePin                     // p   (M3)
     case toggleOverview                // Space (M5)
     case toggleHelp                    // ?   (M4)
+    case overview(OverviewKey)         // arrows / h j k l / Enter / Esc — only while overview is open
+}
+
+/// Keys that drive the Overview while it's open. Unlike every other command these need **no** ⌃⌥
+/// chord (the Overview is modal), so the tap only honors them when told the Overview is showing.
+public enum OverviewKey {
+    case left, right, up, down         // arrows + vim h/l/k/j → move the selection (wraps)
+    case confirm                       // Enter → center the selected window
+    case close                         // Esc / Space → dismiss
 }
 
 /// A global keyboard tap (Quartz event tap) that recognizes ⌃⌥ + key and forwards strip commands.
@@ -28,7 +37,14 @@ public final class HotkeyService {
     // ⌃⌥ — the activation chord.
     private static let chord: CGEventFlags = [.maskControl, .maskAlternate]
 
+    /// While true, the Overview's plain navigation keys are recognized (no chord required) and
+    /// consumed. Set on the main run loop (where the tap callback also runs), so no locking is needed.
+    private var overviewOpen = false
+
     public init() {}
+
+    /// Tell the tap whether the Overview is open, gating the chordless navigation keys.
+    public func setOverviewOpen(_ open: Bool) { overviewOpen = open }
 
     @discardableResult
     public func start() -> Bool {
@@ -56,12 +72,16 @@ public final class HotkeyService {
 
     /// Returns the command for a keyDown event if it matches our chord, else nil (pass through).
     fileprivate func command(for event: CGEvent) -> HotkeyCommand? {
+        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        // While the Overview is open, its navigation keys are recognized chordlessly (and consumed).
+        // Anything else falls through to the normal ⌃⌥ logic, so other commands and typing are intact.
+        if overviewOpen, let key = Self.overviewKey(for: keyCode) { return .overview(key) }
+
         let flags = event.flags
         guard flags.contains(Self.chord) else { return nil }
         // Disallow Command in the chord so app shortcuts (⌘…) are never shadowed.
         if flags.contains(.maskCommand) { return nil }
         let shift = flags.contains(.maskShift)
-        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
 
         switch keyCode {
         case kVK_ANSI_H: return shift ? .movePrev : .slidePrev
@@ -78,6 +98,21 @@ public final class HotkeyService {
         case kVK_Space:  return .toggleOverview
         case kVK_ANSI_Slash: return .toggleHelp   // ⌃⌥/  (the "?" key)
         default: return nil
+        }
+    }
+
+    /// Map a keycode to an Overview navigation key (arrows + vim h/j/k/l, Enter, Esc/Space), or nil.
+    /// Used only while the Overview is open. Vim mapping is the 2-D convention: h=left, l=right,
+    /// j=down, k=up.
+    private static func overviewKey(for keyCode: Int) -> OverviewKey? {
+        switch keyCode {
+        case kVK_LeftArrow, kVK_ANSI_H:  return .left
+        case kVK_RightArrow, kVK_ANSI_L: return .right
+        case kVK_UpArrow, kVK_ANSI_K:    return .up
+        case kVK_DownArrow, kVK_ANSI_J:  return .down
+        case kVK_Return:                 return .confirm
+        case kVK_Escape, kVK_Space:      return .close
+        default:                         return nil
         }
     }
 }
@@ -116,3 +151,9 @@ private let kVK_ANSI_3 = 0x14
 private let kVK_Tab    = 0x30
 private let kVK_Space  = 0x31
 private let kVK_ANSI_Slash = 0x2C
+private let kVK_Return  = 0x24
+private let kVK_Escape  = 0x35
+private let kVK_LeftArrow  = 0x7B
+private let kVK_RightArrow = 0x7C
+private let kVK_DownArrow  = 0x7D
+private let kVK_UpArrow    = 0x7E

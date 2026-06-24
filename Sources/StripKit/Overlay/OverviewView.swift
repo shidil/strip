@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+/// The Overview's keyboard-selection cursor. Held by `OverlayController` (not as view `@State`) so it
+/// survives the hosting-view rebuild that happens on every snapshot while the overview is open.
+final class OverviewSelection: ObservableObject {
+    @Published var index: Int = 0
+}
+
 /// Overview (⌃⌥Space): a dimmed full-screen backdrop with a grid of cards, one per ring window.
 /// Faithful to the prototype's overview (`Strip Window Manager.dc.html`, lines 97-109 + the
 /// `overviewWindows` model, lines 280-288): an accent-tinted card per window with the app name and
@@ -14,11 +20,13 @@ struct OverviewView: View {
     /// Live window thumbnails keyed by `CGWindowID`; cards observe it and swap in real captures as
     /// they land, falling back to an accent placeholder until then (or when Screen Recording is off).
     @ObservedObject var thumbnails: ThumbnailStore
+    @ObservedObject var selection: OverviewSelection
     let onCenter: (CGWindowID) -> Void
     let onClose: () -> Void
 
     /// Cards per row — matches the prototype's natural wrap at its 1180px max width (3 × 304 + gaps).
-    private static let perRow = 3
+    /// Internal so `OverlayController` shares the one constant when computing grid navigation.
+    static let perRow = 3
 
     /// Chunk the windows into rows so each row can be centered (mirrors the prototype's
     /// `flex-wrap` + `justify-content:center`, which a fixed-column `LazyVGrid` can't reproduce —
@@ -49,10 +57,13 @@ struct OverviewView: View {
                     VStack(spacing: 28) {
                         hint
                         VStack(spacing: 24) {
-                            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                            ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                                 HStack(spacing: 24) {
-                                    ForEach(row) { item in
-                                        OverviewCard(item: item, thumbnail: thumbnails[item.id])
+                                    ForEach(Array(row.enumerated()), id: \.element.id) { colIndex, item in
+                                        let flat = rowIndex * Self.perRow + colIndex
+                                        OverviewCard(item: item,
+                                                     thumbnail: thumbnails[item.id],
+                                                     selected: flat == selection.index)
                                             .contentShape(Rectangle())
                                             .onTapGesture { onCenter(item.id); onClose() }
                                     }
@@ -70,8 +81,14 @@ struct OverviewView: View {
     }
 
     private var hint: some View {
-        (Text("Overview · click a window to bring it to center · ")
-            + Text("Space").bold().foregroundColor(.white)
+        (Text("Overview · ")
+            + Text("↑↓←→").bold().foregroundColor(.white)
+            + Text(" or ")
+            + Text("h j k l").bold().foregroundColor(.white)
+            + Text(" to move · ")
+            + Text("↩").bold().foregroundColor(.white)
+            + Text(" to center · ")
+            + Text("Esc").bold().foregroundColor(.white)
             + Text(" to close"))
             .font(.system(size: 14))
             .foregroundColor(Color(white: 0.72))
@@ -83,6 +100,9 @@ private struct OverviewCard: View {
     let item: RailItem
     /// Captured window contents, or `nil` to fall back to the accent placeholder.
     let thumbnail: CGImage?
+    /// The keyboard cursor is on this card → a distinct white halo (separate from the accent border
+    /// that marks the *active* window, so a card can read as both active and selected at once).
+    let selected: Bool
 
     /// All cards share one body height; width follows the window's (clamped) aspect so the thumbnail
     /// fills the body without letterbox bars while rows stay the same height.
@@ -108,8 +128,14 @@ private struct OverviewCard: View {
                 .strokeBorder(Color(nsColor: item.accent),
                               lineWidth: item.active ? 3 : 0)
         )
+        .overlay( // selection halo, sitting just outside the card edge
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.white, lineWidth: selected ? 2.5 : 0)
+                .padding(-4)
+        )
         .shadow(color: .black.opacity(item.active ? 0.6 : 0.5),
                 radius: item.active ? 32 : 22, y: item.active ? 18 : 12)
+        .shadow(color: .white.opacity(selected ? 0.45 : 0), radius: selected ? 18 : 0)
         .overlay(alignment: .topTrailing) {
             if item.pinned { pinnedBadge }
         }

@@ -24,6 +24,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func start() {
         overlay.onCenter = { [weak self] id in self?.controller.setCenter(id) }
+        overlay.onOverviewVisibility = { [weak self] open in self?.hotkeys.setOverviewOpen(open) }
         controller.onRender = { [weak self] snapshot in self?.overlay.update(snapshot) }
         controller.onFocusFrame = { [weak self] frame in self?.overlay.updateFocusRing(frame) }
         controller.refreshAndApply()
@@ -47,6 +48,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         case .togglePin: controller.togglePin()
         case .toggleHelp: overlay.toggleHelp()
         case .toggleOverview: overlay.toggleOverview()
+        case .overview(let key):
+            switch key {
+            case .left: overlay.navigateOverview(.left)
+            case .right: overlay.navigateOverview(.right)
+            case .up: overlay.navigateOverview(.up)
+            case .down: overlay.navigateOverview(.down)
+            case .confirm: overlay.confirmOverview()
+            case .close: overlay.toggleOverview()
+            }
         }
     }
 
