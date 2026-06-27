@@ -68,9 +68,9 @@ public struct StripState {
 
     /// Pin or unpin the focused slot. Pinning fixes whatever window currently occupies the focused
     /// slot so it stays put while the rest of the ring flows past; unpinning lets it flow again.
-    /// If the centered window itself gets pinned, the center moves to the first still-unpinned
-    /// window, and focus moves off any now-pinned slot. Faithful port of the prototype's
-    /// `togglePin` (`Strip Window Manager.dc.html`, lines 355-374).
+    /// Focus stays on the slot just pinned (a pinned window is still focusable). If the centered
+    /// window itself gets pinned, the *center* (the rotation anchor) moves to the first still-unpinned
+    /// window — but focus and the focus ring remain on the pinned window.
     ///
     /// Pure (mutates only `self`) so the state transition is unit-testable without AppKit/AX.
     public mutating func togglePin() {
@@ -82,11 +82,10 @@ public struct StripState {
         }
         guard let id = StripLayout(self).assignment()[fs] else { return } // empty slot → nothing to pin
         pins[fs] = id                            // pin the window currently in the focused slot
-        let up = slots.filter { pins[$0] == nil }
-        focusSlot = up.contains(primarySlot) ? primarySlot : (up.first ?? fs)
+        // Focus stays on `fs` — a pinned window remains focusable (ring + emphasis hold on it).
         let pinned = Set(pins.values)
         if let c = centerId, pinned.contains(c) {                         // center got pinned →
-            centerId = ring.first { !pinned.contains($0) } ?? c           // hand center to first unpinned
+            centerId = ring.first { !pinned.contains($0) } ?? c           // hand rotation anchor to first unpinned
         }
         clampToValidSlots()
     }
@@ -180,6 +179,18 @@ public struct StripState {
         }
         while ui < unpinned.count { rebuilt.append(unpinned[ui]); ui += 1 }
         return rebuilt
+    }
+
+    /// The slot focus lands on after moving `dir` (+1 right / −1 left) across the *occupied* slots —
+    /// pinned slots included, so a pinned window is reachable. Clamps at the ends (no wrap), matching
+    /// the existing focus-edge behavior. Pure, so J/K navigation is unit-testable without AppKit/AX.
+    public func focusSlotAfterMove(_ dir: Int) -> Slot {
+        let assign = StripLayout(self).assignment()
+        let occupied = slots.filter { assign[$0] != nil }
+        guard !occupied.isEmpty else { return focusSlot }
+        let i = occupied.firstIndex(of: focusSlot) ?? 0
+        let ni = min(max(0, i + dir), occupied.count - 1)
+        return occupied[ni]
     }
 
     /// Drop pins on slots that don't exist for the current column count and clamp focus to a valid

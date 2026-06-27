@@ -54,9 +54,6 @@ public struct StripLayout {
         if !unpinnedSlots.contains(anchorSlot) { anchorSlot = unpinnedSlots.first ?? anchorSlot }
         let anchorIdx = max(0, unpinnedSlots.firstIndex(of: anchorSlot) ?? 0)
 
-        var focusSlot = state.focusSlot
-        if !unpinnedSlots.contains(focusSlot) { focusSlot = anchorSlot }
-
         var centerId = state.centerId
         if centerId == nil || !unpinned.contains(centerId!) { centerId = unpinned.first }
         let centerPos = centerId.flatMap { unpinned.firstIndex(of: $0) } ?? 0
@@ -67,6 +64,14 @@ public struct StripLayout {
             for (k, s) in unpinnedSlots.enumerated() {
                 assign[s] = unpinned[posMod(centerPos + (k - anchorIdx), m)]
             }
+        }
+
+        // Focus may rest on any occupied slot — a pinned slot included (pinning doesn't make a window
+        // unfocusable). Fall back only when the focused slot has no window at all (too few windows to
+        // fill it): prefer the anchor, else the first occupied slot.
+        var focusSlot = state.focusSlot
+        if assign[focusSlot] == nil {
+            focusSlot = assign[anchorSlot] != nil ? anchorSlot : (slots.first { assign[$0] != nil } ?? anchorSlot)
         }
 
         return Resolved(slots: slots, pins: pins, unpinned: unpinned, m: m,

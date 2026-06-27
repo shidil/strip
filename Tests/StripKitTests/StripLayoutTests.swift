@@ -76,6 +76,14 @@ final class StripLayoutTests: XCTestCase {
         XCTAssertEqual(StripLayout(s).activeId, 4, "focus on R → active is the R window")
     }
 
+    func testFocusSlotMayRestOnAPinnedSlot() {
+        // Focus pointed at a pinned slot must resolve to the pinned window (not get clamped off it),
+        // so the focus ring keeps tracking a pinned, focused window.
+        let s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus,
+                           pins: [.L: 7], focusSlot: .L)
+        XCTAssertEqual(StripLayout(s).activeId, 7, "focus on a pinned slot resolves to the pinned window")
+    }
+
     // MARK: - Space-filling geometry (windows fill the visible frame; sizes driven by LayoutConfig)
 
     /// Default config on an ultrawide: windows fill the full usable height and span edge-to-edge.

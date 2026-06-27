@@ -28,13 +28,27 @@ final class StripStateTests: XCTestCase {
         XCTAssertEqual(assignment(s)[.C], 5)
     }
 
-    func testPinningMovesFocusOffThePinnedSlot() {
-        // Focus the primary slot (C). Pinning C should hand focus to another unpinned slot.
+    func testPinningKeepsFocusOnThePinnedSlot() {
+        // Focus the primary slot (C). Pinning C must leave focus on C — a pinned window stays
+        // focusable, so its focus ring holds rather than jumping to a neighbor.
         var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .C)
         s.togglePin()
         XCTAssertNotNil(s.pins[.C])
-        XCTAssertNotEqual(s.focusSlot, .C, "focus leaves the slot it just pinned")
-        XCTAssertNil(s.pins[s.focusSlot], "focus lands on an unpinned slot")
+        XCTAssertEqual(s.focusSlot, .C, "focus stays on the slot it just pinned")
+        XCTAssertEqual(StripLayout(s).activeId, s.pins[.C],
+                       "the pinned window is the active/focused window (ring has a window to track)")
+    }
+
+    func testFocusNavigationLandsOnAndPassesThePinnedSlot() {
+        // Pin C, then move focus from L: K must land on the pinned C slot (not skip it), and a
+        // second K must pass it to R.
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .C)
+        s.togglePin()                                 // pin the window in C, focus stays C
+        s.focusSlot = .L
+        s.focusSlot = s.focusSlotAfterMove(1)
+        XCTAssertEqual(s.focusSlot, .C, "K moves focus onto the pinned center slot")
+        s.focusSlot = s.focusSlotAfterMove(1)
+        XCTAssertEqual(s.focusSlot, .R, "another K moves focus past the pinned slot to R")
     }
 
     func testPinningTheCenteredWindowMovesCenterToFirstUnpinned() {

@@ -324,11 +324,7 @@ public final class StripController {
     }
 
     private func advanceFocus(_ dir: Int) {
-        let up = state.slots.filter { state.pins[$0] == nil }
-        guard !up.isEmpty else { return }
-        let i = up.firstIndex(of: state.focusSlot) ?? 0
-        let ni = min(max(0, i + dir), up.count - 1)
-        state.focusSlot = up[ni]
+        state.focusSlot = state.focusSlotAfterMove(dir)
     }
 
     /// Carry the centered window along the film, reordering it (`moveWindow`, prototype lines 341-347).
