@@ -49,8 +49,8 @@ flowchart TD
 
 Defining characteristics:
 
-- **Single coordinator.** `StripController` (`Sources/StripKit/StripController.swift`) is the only stateful orchestrator. Every command, reconcile, and drag resolves into a call to its `apply()`.
-- **Closure-based wiring.** Components do not reference each other's types. They communicate through closures (`onCommand`, `onReconcile`, `onRender`, `onFocusFrame`, `onCenter`, and others) assigned once in `AppDelegate.start()`.
+- **Single coordinator.** `StripController` (`Sources/StripKit/StripController.swift`) owns the strip's logical state and is the only orchestrator of window layout. Layout-affecting commands, reconciles, and drags converge on its `apply()`; chrome-only commands (help, overview) are routed by `AppDelegate` straight to `OverlayController` and do not reach the controller.
+- **Closure-based wiring.** The top-level collaborators are connected through closures (`onCommand`, `onReconcile`, `onRender`, `onFocusFrame`, `onCenter`, and others) assigned once in `AppDelegate.start()`, so they do not hold references to one another. (The controller does construct its own `AccessibilityService` and `WindowAnimator` directly — see [Limitations and Constraints](#limitations-and-constraints).)
 - **Quartz coordinates internally.** All geometry is Quartz-global (top-left origin, Y increasing downward — the coordinate system the AX API itself uses). Conversion to Cocoa coordinates happens only at the AppKit boundary, in `Sources/StripKit/Layout/Coordinates.swift`.
 - **`CGWindowID` as identity.** Windows are tracked by `CGWindowID` throughout (`StripState.ring`, `StripController.windowsById`, `StripState.pins`).
 
@@ -184,16 +184,16 @@ sequenceDiagram
 
 - **Responsibility:** select the active display.
 - **Key files/types:** `StripController.activeScreen()`; `Layout/Coordinates.swift` (`primaryHeight`, `NSScreen.quartzFrame` / `quartzVisibleFrame`).
-- **Notes:** there is one global ring projected onto the mouse-active screen. The application does not register for `NSApplication.didChangeScreenParameters`; display configuration changes are picked up at the next `apply()`.
+- **Notes:** there is one global ring projected onto the mouse-active screen. The active screen is re-selected only in `init`, `refresh()` (`StripController.swift:136`), and the release path (`:580`); `apply()` reuses the stored `screen`. The application does not register for `NSApplication.didChangeScreenParameters`, so a display-configuration change takes effect on the next `refresh()` (the next reconcile), not on a plain `apply()`.
 
-### Layout engine — `Layout/` (pure)
+### Layout engine — `Layout/`
 
 - **Responsibility:** decide which window occupies which slot (topology) and where each slot is positioned (geometry).
 - **Key files/types:** `StripLayout.resolve()` (pin-aware ring rotation), `placements(in:)` (projection onto Quartz rectangles and parking of off-strip windows), `activeId`; `SlotGeometry.rects(...)`; `DragResolver.resizeConfig(...)`; the `WindowPlacement` struct.
 - **Inputs:** `StripState` and a visible-frame `CGRect`.
 - **Outputs:** `[WindowPlacement]` (Quartz frames) and slot assignments.
 - **Owned state:** none; the computation is pure and its results are discarded after each `apply()`.
-- **Notes:** CoreGraphics only, no AppKit or AX. Covered by unit tests. See [Layout Architecture](#layout-architecture).
+- **Notes:** `StripLayout`, `SlotGeometry`, and `DragResolver` are pure (CoreGraphics only, no AppKit or AX) and are covered by unit tests. `Coordinates.swift` also lives in `Layout/` but imports AppKit (`NSScreen`) — it is the Quartz↔Cocoa boundary, not part of the pure engine. See [Layout Architecture](#layout-architecture).
 
 ### Command and action dispatch — `StripController`
 
@@ -331,7 +331,9 @@ The codebase uses no locks and no actors. Thread safety rests on two conventions
 
 **Off the main thread (per-pid serial `DispatchQueue`, `com.spike.strip.ax.<pid>`):**
 
-- `AXWindow.setFrame` writes, `EnhancedUI` toggles, and `focusAttributes` (the AX half of focus). FIFO ordering guarantees that disabling `AXEnhancedUserInterface` precedes frame writes and that re-enabling it (in `stop()`) follows the final frame.
+- The animator's display-link tick writes (`AXWindow.setFrame`), `EnhancedUI` toggles, and `focusAttributes` (the AX half of focus). FIFO ordering guarantees that disabling `AXEnhancedUserInterface` precedes frame writes and that re-enabling it (in `stop()`) follows the final frame.
+
+Not every AX frame write uses this queue. `WindowAnimator.snap` (the un-animated path, taken when `animated == false`) and the release/quit unpark writes (`StripController.unparkStranded` / `unparkFrame`) call `setFrame` synchronously on the calling thread, which is the main thread. Only the tick path runs off-main with backpressure. See [Limitations and Constraints](#limitations-and-constraints).
 
 **Focus split:** `scheduleFocus` runs the AX half (`animator.focusAttributes`, which sets `kAXMain` / `kAXFocused` and performs `kAXRaise`) off-main, and the AppKit half (`activateApp`) on the main thread.
 
@@ -368,7 +370,7 @@ The codebase uses no locks and no actors. Thread safety rests on two conventions
 
 ## Layout Architecture
 
-The layout engine is a pure, value-typed core (`Sources/StripKit/Layout/`) with two independent halves:
+The layout engine is a pure, value-typed core — `StripLayout`, `SlotGeometry`, and `DragResolver` in `Sources/StripKit/Layout/` (the directory also holds `Coordinates.swift`, which is the AppKit boundary, not part of the engine). It has two independent halves:
 
 - **Topology** (`StripLayout.resolve()`): decides which window lands in which slot by pin-aware ring rotation. Unpinned slots are filled by rotating the unpinned ring around the center — `assign[s] = unpinned[posMod(centerPos + (k - anchorIdx), m)]` (`StripLayout.swift:68`) — while pinned slots are taken directly from `pins`.
 - **Geometry** (`SlotGeometry.rects(cols:emphasis:focusSlot:in:config:)`): decides where each slot sits — the width split (focus ratio or equal), the height fraction (vertically centered), padding, gaps, and monocle centering. It always emits Quartz rectangles.
@@ -377,7 +379,7 @@ The layout engine is a pure, value-typed core (`Sources/StripKit/Layout/`) with 
 
 **Coordinate invariant:** everything internal is Quartz-global (top-left origin, Y downward). Because AX is itself Quartz, placements feed directly into `AXWindow.setFrame` without conversion. Cocoa coordinates appear only at the AppKit boundary, through `Coordinates.swift` (`toQuartz` / `toCocoa`, pivoting on `primaryHeight`), and only for overlay panels.
 
-**Recompute model:** each command mutates `StripState`, then `apply()` recomputes all placements from scratch; computation is not incremental. The animator absorbs the result through in-flight drops and spring re-targeting, and bursts are coalesced into one `apply()` per run-loop pass (`scheduleApply`). The working set is `cols` windows (default 3).
+**Recompute model:** each command mutates `StripState`, then `apply()` recomputes all placements from scratch; computation is not incremental. `placements(in:)` maps over the entire `state.ring` (`StripLayout.swift:90`) and `apply()` builds one animator target per placement, so layout and target construction scale with the number of managed windows. The number of *visible* slots is bounded by `cols` (default 3); off-strip windows still receive parked placements. The animator absorbs the result through in-flight drops and spring re-targeting, and bursts are coalesced into one `apply()` per run-loop pass (`scheduleApply`).
 
 **Multi-monitor:** a single global ring is projected onto the active screen (`activeScreen()`). There are no per-display strips and no inter-display moves.
 
@@ -491,7 +493,7 @@ flowchart TD
 | **Add a column count / slot** | `StripState.slots` / `primarySlot` / `newWindowSlotPreference`, plus `SlotGeometry`'s slot switch | `resolve()` is generic over `slots`, so rotation adapts automatically. |
 | **Change hotkey behavior** | `HotkeyService.command(for:)` keycode table, the `HotkeyCommand` enum, and the switch in `AppDelegate.handle(_:repeated:)` | The ⌃⌥ chord must not include ⌘. Overview modal keys are a separate path (`overviewKey(for:)`, gated by `overviewOpen`). |
 | **Change window discovery** | `AccessibilityService.classifyGates` (what counts as managed) and `StripController.refresh()` plus `belongsToActiveStrip` (membership policy) | `refresh()` retains ring windows on `isAlive` alone and does not re-classify already-managed windows. `frame` and `isMinimized` must stay un-cached (off-Space staleness). |
-| **Change window movement / resizing** | `WindowAnimator` (`animate` / `tick` / `write`) for animated motion; `Spring` / `SpringConfig` for feel | Three code paths write frames and must stay consistent: the animator's display-link loop, `WindowAnimator.snap` (when `animated == false`), and `StripController.unparkStranded` / `unparkFrame` (synchronous AX at release and quit, `StripController.swift:620`). Animated writes stay off-main on the per-pid queue; the release-path writes are the synchronous exceptions. |
+| **Change window movement / resizing** | `WindowAnimator` (`animate` / `tick` / `write`) for animated motion; `Spring` / `SpringConfig` for feel | Three code paths write frames and must stay consistent: the animator's display-link loop (off-main on the per-pid queue, with backpressure), `WindowAnimator.snap` (synchronous, when `animated == false`, `WindowAnimator.swift:186`), and `StripController.unparkStranded` / `unparkFrame` (synchronous at release and quit, `StripController.swift:620`). Both `snap` and the release path call `setFrame` synchronously on the main thread; only the tick path goes off-main. |
 | **Add a setting** | A `PersistedSettings` field plus a `LayoutConfig` entry (tolerant decode) plus a `persist()` call site in the mutating command plus `restoreSettings()` | There is no migration mechanism; rely on tolerant decode and do not change the `v1` key. Add a clamp range for sizing knobs. Expose the setting through the menu or a hotkey, or it will be reachable only by editing the blob (as with `newWindowPlacement`). |
 | **Change UI** | `OverlayController` (panels and render), the relevant SwiftUI view, and `OverlaySnapshot` / `OverlayModel` for new data | The rail and pill are persistent (incremental `@Published` diff — keep `Equatable` correct); help and overview are rebuilt (no SwiftUI `@State` survives — use an `ObservableObject`). All panel and view mutation runs on the main thread. |
 | **Add platform-specific handling** (fullscreen, Spaces, multi-display) | New code in `Accessibility/` and `StripController` reconcile; a screen-change observer would be installed in `WindowObserver.start` | These are not modeled today (see [Limitations and Constraints](#limitations-and-constraints)). Enumeration stays main-bound. |
@@ -506,7 +508,7 @@ These are factual properties of the current implementation to be aware of when c
 - **`StripController` concentrates the coordinator's responsibilities** in one 701-line type: state, persistence, reconciliation and discovery, the apply pipeline, focus routing, drag policy, suspend/release, and snapshot building. It is the highest-coupling node in the system. The responsibilities touch near-disjoint slices of its fields.
 - **The integration layer has no injection seam.** `AccessibilityService` and `WindowAnimator` are constructed inline (`StripController.swift:7-8`), and there are no `protocol` declarations in `Sources/`. The orchestration logic therefore runs only against the real services and is not unit-testable in isolation.
 - **Thread safety is convention-based.** There are no locks or actors; correctness depends on main-thread confinement and the per-pid write queue being respected by every caller. `AXAttrCache` documents (but does not assert) its single-queue confinement (`AXAttrCache.swift:12`).
-- **Three code paths write window frames:** the `WindowAnimator` display-link loop, `WindowAnimator.snap`, and the synchronous release/quit writes in `StripController.unparkStranded` / `unparkFrame` (`StripController.swift:620`). The release-path writes are synchronous and un-backpressured by design.
+- **Three code paths write window frames, with different threading.** The `WindowAnimator` display-link tick writes off-main on the per-pid serial queue with in-flight backpressure. `WindowAnimator.snap` (`WindowAnimator.swift:186`) and the release/quit writes in `StripController.unparkStranded` / `unparkFrame` (`StripController.swift:620`) both call `setFrame` synchronously on the main thread, without backpressure.
 - **The event tap runs on the main run loop** (`HotkeyService.swift:71`). When the main thread is busy the system can disable the tap (`tapDisabledByTimeout` / `tapDisabledByUserInput`), which `reEnable()` recovers; a `tapDisabled` signpost records each occurrence.
 - **The emphasized-slot rule is duplicated** across `SlotGeometry.swift:39`, `StripController.swift:567`, and `DragResolver`. The three must remain in agreement.
 - **Some `Model/` and `Layout/` types depend on AppKit:** `ManagedWindow` and `Theme` hold `AXWindow` / `NSColor`, and `Coordinates` uses `NSScreen`. These types cannot be constructed in a headless context.
