@@ -43,6 +43,24 @@ public final class AccessibilityService {
             .sorted { $0.frame.minX < $1.frame.minX }
     }
 
+    /// Every window id the *window server* currently knows about, across all apps, layers and
+    /// displays (minimized and off-Space windows included). This is a single cheap CoreGraphics call
+    /// — no AX IPC — and, unlike the flaky `kAXWindows` enumeration, it's authoritative about
+    /// liveness: a closed window's id is gone from this set. `refresh()` uses it to tell a genuinely
+    /// closed ring window (drop it) from one a busy app merely omitted from an AX scan (keep it),
+    /// so stale AX elements can't accumulate as off-screen ghosts.
+    public func liveWindowIDs() -> Set<CGWindowID> {
+        let opts: CGWindowListOption = [.optionAll, .excludeDesktopElements]
+        guard let info = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        var ids = Set<CGWindowID>()
+        for w in info {
+            if let n = w[kCGWindowNumber as String] as? CGWindowID { ids.insert(n) }
+        }
+        return ids
+    }
+
     /// All managed standard windows across every running regular app, on every display.
     public func allWindows() -> [ManagedWindow] {
         let sp = Signpost.log

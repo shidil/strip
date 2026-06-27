@@ -39,4 +39,35 @@ final class StripControllerTests: XCTestCase {
         let b = StripController.unparkFrame(index: 1, of: 5, in: vis)
         XCTAssertNotEqual(a.origin, b.origin)
     }
+
+    // MARK: - Ghost reconcile (keepsMissingWindow)
+
+    func testKeepsMissingWindowWhenElementAndServerAgreeLive() {
+        // A transient AX-enumeration miss for a window that's still real and on-screen: keep it.
+        XCTAssertTrue(StripController.keepsMissingWindow(
+            elementAlive: true, windowServerLive: true, isMinimized: false))
+    }
+
+    func testDropsMissingWindowWhenServerNoLongerListsIt() {
+        // The ghost bug: a stale AX element still answers, but the window server has dropped its id.
+        XCTAssertFalse(StripController.keepsMissingWindow(
+            elementAlive: true, windowServerLive: false, isMinimized: false))
+    }
+
+    func testDropsMissingWindowWhenElementIsDead() {
+        XCTAssertFalse(StripController.keepsMissingWindow(
+            elementAlive: false, windowServerLive: true, isMinimized: false))
+    }
+
+    func testDropsMissingWindowWhenBothSignalsDead() {
+        XCTAssertFalse(StripController.keepsMissingWindow(
+            elementAlive: false, windowServerLive: false, isMinimized: false))
+    }
+
+    func testDropsMissingWindowWhenMinimized() {
+        // The blank-slot bug: a minimized window is still alive and still listed by the window
+        // server, but it's in the Dock — it must NOT hold a slot/focus ring over empty wallpaper.
+        XCTAssertFalse(StripController.keepsMissingWindow(
+            elementAlive: true, windowServerLive: true, isMinimized: true))
+    }
 }

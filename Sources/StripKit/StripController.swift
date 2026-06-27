@@ -140,12 +140,18 @@ public final class StripController {
 
         // Transient-miss resilience (M7): AX enumeration is flaky during app activation churn — a
         // busy app can return an incomplete window list for one scan, especially right after we
-        // activate a window on `apply()`. A ring window absent from *this* scan but whose AX element
-        // is still alive is just such a miss, not a closed window; keep it (reusing its still-valid
-        // handle, refreshing its live frame) so it isn't wrongly dropped and stranded out of the
-        // strip. Only a genuinely-dead element falls through to be dropped below.
+        // activate a window on `apply()`. A ring window absent from *this* scan that's still real is
+        // just such a miss, not a closed window; keep it (reusing its still-valid handle, refreshing
+        // its live frame) so it isn't wrongly dropped and stranded out of the strip. "Still real"
+        // requires BOTH a live AX element AND a live window-server id — a stale element whose id has
+        // vanished is a ghost and falls through to be dropped below (see `keepsMissingWindow`).
+        let liveIDs = ax.liveWindowIDs()
         for id in state.ring where allById[id] == nil {
-            guard var w = windowsById[id], w.ax.isAlive else { continue }
+            guard var w = windowsById[id],
+                  Self.keepsMissingWindow(elementAlive: w.ax.isAlive,
+                                          windowServerLive: liveIDs.contains(id),
+                                          isMinimized: w.ax.isMinimized)
+            else { continue }
             if let live = w.ax.frame { w.frame = live }
             allById[id] = w
         }
@@ -193,6 +199,26 @@ public final class StripController {
         windowsById = [:]
         for id in state.ring { windowsById[id] = allById[id] }
         normalize()
+    }
+
+    /// Decide whether a ring window that's *absent from the current AX enumeration* is a transient
+    /// miss to keep, or one to drop. Pure, so it's unit-testable.
+    ///
+    /// AX `kAXWindows` enumeration is flaky during app-activation churn, so absence alone never means
+    /// the window is gone. We keep it only when all three say it's a real, on-strip window:
+    /// - `elementAlive` — the AX element isn't destroyed, AND
+    /// - `windowServerLive` — the window server still lists its id, AND
+    /// - `!isMinimized` — it isn't minimized to the Dock.
+    ///
+    /// Relying on `elementAlive` alone was the ghost bug — some apps leave the AX element answering
+    /// (`.cannotComplete`, not `.invalidUIElement`) after their window closes, so the entry parked
+    /// off-screen forever; the window-server id list is authoritative about liveness and clears that.
+    /// The `isMinimized` gate fixes the blank-slot bug — a minimized window is still alive and still
+    /// listed by the window server, so without this it stayed in the ring and held a slot/focus ring
+    /// over empty wallpaper. Dropping it lets the strip close up; deminiaturizing posts a reconcile
+    /// (WindowObserver) that re-admits it as a fresh window.
+    static func keepsMissingWindow(elementAlive: Bool, windowServerLive: Bool, isMinimized: Bool) -> Bool {
+        elementAlive && windowServerLive && !isMinimized
     }
 
     /// When the centered window is gone, pick its replacement from the windows that flanked it: the
