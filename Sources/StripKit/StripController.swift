@@ -12,6 +12,34 @@ public final class StripController {
     /// The window we last handed keyboard focus to — so `apply()` only re-focuses on a real change.
     private var lastFocusedId: CGWindowID?
 
+    /// Set while a coalesced `apply()` is already queued for the next run-loop pass — so a burst of
+    /// rapid commands (a held/auto-repeating slide key) collapses into one apply, not one per repeat.
+    /// See `scheduleApply()`.
+    private var applyScheduled = false
+
+    /// The pending debounced keyboard-focus hand-off (see `scheduleFocus(_:_:)`); cancelled and
+    /// rescheduled on each slide so only the window you finally land on gets focused.
+    private var focusWork: DispatchWorkItem?
+
+    /// How long sliding must be idle before keyboard focus actually moves. `focus()` is 3 synchronous
+    /// cross-process AX calls + `activate()` (~20ms for Electron apps); debouncing it keeps that off
+    /// the per-frame slide path so the display-link tick never starves. Kept a touch longer than
+    /// `minNavInterval` so a held scroll only activates the window you finally land on, not every
+    /// window it passes. Imperceptible for single taps.
+    private static let focusSettleDelay: TimeInterval = 0.17
+
+    /// Paced-navigation state (held slide / focus-move). A held key auto-repeats at ~30/s — far faster
+    /// than the springs can carry a window across a slot — so advancing the ring on every repeat leaves
+    /// every window stuck mid-flight, bunched around the center. We instead advance at most once per
+    /// `minNavInterval`, giving each step time to travel; surplus repeats are dropped. Fresh presses
+    /// (not auto-repeats) bypass this entirely for 1:1 tap responsiveness.
+    private var navWork: DispatchWorkItem?
+    private var pendingNav: (() -> Void)?
+    private var lastNavAt = Date.distantPast
+    /// One slide step per 200ms ≈ 5 windows/s — a calm, watchable film scroll. Tune to taste:
+    /// lower = faster scroll but more clustering; higher = cleaner but more sluggish.
+    private static let minNavInterval: TimeInterval = 0.20
+
     /// When true (M2+), frame changes spring smoothly; when false, they snap instantly.
     public var animated = true
 
@@ -26,6 +54,11 @@ public final class StripController {
     /// Emitted with the focused window's live frame (Quartz global) so the overlay can track it with
     /// a focus ring as it animates; `nil` hides the ring.
     public var onFocusFrame: ((CGRect?) -> Void)?
+
+    /// Emitted with an app's pid just before `apply()` activates it to move keyboard focus, so the
+    /// window observer can ignore the activation/focus notifications that activation generates instead
+    /// of treating them as a real change and forcing a redundant reconcile (perf 1.1).
+    public var onWillActivate: ((pid_t) -> Void)?
 
     /// Whether the focus ring (the border drawn around the focused window) is shown. Toggled from the
     /// status-bar menu and persisted. When `false` we forward `nil` frames so the overlay hides the
@@ -96,6 +129,10 @@ public final class StripController {
     /// "is it on the active display" test only gates *new* windows joining the strip.
     public func refresh() {
         guard !isSuspended else { return }
+        let sp = Signpost.log
+        let refreshState = sp.beginInterval("refresh")
+        defer { sp.endInterval("refresh", refreshState) }
+
         screen = activeScreen()
         let all = ax.allWindows()
         var allById: [CGWindowID: ManagedWindow] = [:]
@@ -216,23 +253,56 @@ public final class StripController {
     }
 
     /// Slide the film: bring the previous/next window to center (`rotate`, prototype lines 334-340).
-    public func rotate(_ dir: Int) {
+    /// A held key (`repeated`) is paced so the film scrolls at a watchable rate; a fresh press acts now.
+    public func rotate(_ dir: Int, repeated: Bool = false) {
+        navStep(repeated) { [weak self] in self?.advanceCenter(dir) }
+    }
+
+    private func advanceCenter(_ dir: Int) {
         let pinned = Set(state.pins.values)
         let up = state.ring.filter { !pinned.contains($0) }
         guard !up.isEmpty else { return }
         let pos = state.centerId.flatMap { up.firstIndex(of: $0) } ?? 0
         state.centerId = up[posMod(pos + dir, up.count)]
-        apply()
+    }
+
+    /// Run a navigation step now (fresh press → 1:1 responsive) or paced (held key → at most one step
+    /// per `minNavInterval`, latest direction wins, surplus repeats dropped). Either way the expensive
+    /// window-moving `apply()` is coalesced via `scheduleApply()`.
+    private func navStep(_ repeated: Bool, _ step: @escaping () -> Void) {
+        guard repeated else {
+            lastNavAt = Date()
+            step()
+            scheduleApply()
+            return
+        }
+        pendingNav = step
+        guard navWork == nil else { return } // a paced step is already queued; this one's `step` wins
+        let delay = max(0, Self.minNavInterval - Date().timeIntervalSince(lastNavAt))
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.navWork = nil
+            guard let step = self.pendingNav else { return }
+            self.pendingNav = nil
+            self.lastNavAt = Date()
+            step()
+            self.scheduleApply()
+        }
+        navWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// Move keyboard focus between slots (`focusMove`, prototype lines 348-354).
-    public func focusMove(_ dir: Int) {
+    public func focusMove(_ dir: Int, repeated: Bool = false) {
+        navStep(repeated) { [weak self] in self?.advanceFocus(dir) }
+    }
+
+    private func advanceFocus(_ dir: Int) {
         let up = state.slots.filter { state.pins[$0] == nil }
         guard !up.isEmpty else { return }
         let i = up.firstIndex(of: state.focusSlot) ?? 0
         let ni = min(max(0, i + dir), up.count - 1)
         state.focusSlot = up[ni]
-        apply()
     }
 
     /// Carry the centered window along the film, reordering it (`moveWindow`, prototype lines 341-347).
@@ -300,12 +370,24 @@ public final class StripController {
     /// when `animated`, snapping instantly otherwise.
     public func apply() {
         guard !isSuspended, !state.ring.isEmpty else { return }
+        let sp = Signpost.log
+        let applyState = sp.beginInterval("apply")
+        defer { sp.endInterval("apply", applyState) }
+
         let vis = screen.quartzVisibleFrame
         let layout = StripLayout(state)
+        // Nested interval: isolates pure layout-recompute time within the command path. Measured at
+        // the call site so the engine (StripLayout) stays os-free and trivially unit-testable.
+        let placementsState = sp.beginInterval("placements")
         let placements = layout.placements(in: vis)
+        sp.endInterval("placements", placementsState)
 
-        let targets: [(ax: AXWindow, frame: CGRect)] = placements.compactMap { p in
-            windowsById[p.id].map { (ax: $0.ax, frame: p.frame) }
+        // `current` is the window's live frame (read during the last `refresh()`), passed so the
+        // animator can seed a new window's spring without its own synchronous AX read (perf: animate
+        // seeding). It's only consumed when the animator has no existing entry for the window; for the
+        // user-drag re-seat, `handleUserDrag` refreshes this cached frame to where the user left it.
+        let targets: [(ax: AXWindow, frame: CGRect, current: CGRect)] = placements.compactMap { p in
+            windowsById[p.id].map { (ax: $0.ax, frame: p.frame, current: $0.frame) }
         }
         animator.focusedID = layout.activeId // ring tracks the focused window
         if animated {
@@ -315,12 +397,53 @@ public final class StripController {
         }
         // Move real keyboard focus to the focused-slot window, but only when it actually changes —
         // so re-applies that don't change focus (spring cycle, re-tile) don't yank the keyboard around.
+        // Debounced off the hot path: focus() is synchronous cross-process AX, too costly to run on
+        // every step of a fast slide (perf: slide stutter) — see scheduleFocus.
         if let activeId = layout.activeId, let w = windowsById[activeId], activeId != lastFocusedId {
-            w.ax.focus()
-            lastFocusedId = activeId
+            scheduleFocus(activeId, w)
         }
         logState(placements)
         onRender?(railSnapshot(layout))
+    }
+
+    /// Coalesce a burst of rapid commands (a held / auto-repeating slide key) into a single `apply()`
+    /// per run-loop pass. The cheap state change (centerId / focusSlot) already happened synchronously
+    /// at the call site, so the deferred apply always reflects the latest state. Without this, holding
+    /// ⌃⌥L floods the main queue with one full apply per OS key-repeat — each a 20–49ms block that
+    /// starves the `.main` display-link tick, so the springs never advance and the animation freezes.
+    /// Coalesced, the spring simply re-targets one window further each repeat and glides continuously.
+    private func scheduleApply() {
+        guard !applyScheduled else { return }
+        applyScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.applyScheduled = false
+            self.apply()
+        }
+    }
+
+    /// Hand real keyboard focus to the centered window — DEBOUNCED, and the AX itself dispatched OFF
+    /// the main thread. Two compounding problems made fast slides stutter and a held slide key freeze:
+    /// (1) `focus()` is synchronous cross-process AX (~20ms for an Electron app), and the centered
+    /// window changes on every slide, so it ran on the main thread every step and starved the
+    /// `.main` display-link tick; (2) it ran once per key-repeat. The debounce cancels on each new
+    /// slide so only the window you finally settle on is focused; `animator.focus` then performs the
+    /// AX on the app's serial queue, never on main. The *visual* focus ring still tracks immediately
+    /// (animator.focusedID / emitFocusFrame) — only the OS focus routing is deferred + off-loaded.
+    private func scheduleFocus(_ id: CGWindowID, _ w: ManagedWindow) {
+        focusWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            // Tell the observer we're about to activate this app, so the activation/focus
+            // notifications our own focus() generates don't trigger a redundant reconcile (perf 1.1).
+            // Set on main *before* the off-main activation lands; the 0.2s grace covers the hop.
+            self.onWillActivate?(w.ax.pid)
+            self.lastFocusedId = id
+            self.animator.focusAttributes(w.ax) // cross-process AX off-main (the ~20ms part)
+            w.ax.activateApp()                  // AppKit app-activation stays on main (cheap, ~1–2ms)
+        }
+        focusWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusSettleDelay, execute: work)
     }
 
     /// Build the overlay snapshot from the current state + layout (mirrors prototype `rail` +
@@ -363,6 +486,25 @@ public final class StripController {
         apply()
     }
 
+    /// Handle a pure external focus/activation (Cmd-Tab / `open -a` of a running app) of `pid` whose
+    /// now-focused window is `focusedWindowID` (read cheaply by the observer; `nil` if unreadable).
+    ///
+    /// When that window is already a managed ring member, window membership hasn't changed — and Strip
+    /// deliberately does **not** follow external focus (`apply()` only re-focuses when the focus-slot
+    /// occupant changes), so there is genuinely nothing to do. We skip the full `allWindows()` sweep
+    /// entirely: the dominant ~32ms main-thread enumeration cost that activation churn used to pay for
+    /// no benefit (perf 1.1 second half). When the focused window is unknown — it could be a brand-new
+    /// window, or a membership change whose own notification we missed — fall back to a full reconcile
+    /// so nothing is stranded.
+    public func handleExternalActivation(pid: pid_t, focusedWindowID id: CGWindowID?) {
+        guard !isSuspended else { return }
+        if let id, windowsById[id] != nil {
+            Signpost.log.emitEvent("reconcile.skip") // membership unchanged → no enumeration
+            return
+        }
+        refreshAndApply() // unknown focused window → full fallback
+    }
+
     // MARK: - Respect user drags (M7 Slice 4)
 
     /// Whether the animator is currently driving `id` — the window observer consults this so the
@@ -382,9 +524,16 @@ public final class StripController {
     /// stale; we `forget` it before re-applying so it glides from where the user left it rather than
     /// no-op'ing (move) or jumping from its old slot first (resize) — the Slice-1 lesson.
     public func handleUserDrag(id: CGWindowID, wasResize: Bool) {
-        guard !isSuspended, state.ring.contains(id), let w = windowsById[id] else { return }
+        guard !isSuspended, state.ring.contains(id), var w = windowsById[id] else { return }
 
-        if wasResize, id == dominantWindowId(), let live = w.ax.frame {
+        // Refresh the cached frame to where the user actually left the window. The animator re-seeds
+        // this window (it was just `forget`-ten) from the controller-supplied `current` frame rather
+        // than reading AX itself, so this keeps the snap-back gliding from the drop point (perf:
+        // animate seeding) instead of jumping from the stale pre-drag slot.
+        let live = w.ax.frame
+        if let live { w.frame = live; windowsById[id] = w }
+
+        if wasResize, id == dominantWindowId(), let live {
             let vis = screen.quartzVisibleFrame
             state.config = DragResolver.resizeConfig(focusFrame: live, vis: vis, cols: state.cols,
                                                      emphasis: state.emphasis, base: state.config)
@@ -539,6 +688,7 @@ public final class StripController {
                 .map { "\($0.key.rawValue):\(windowsById[$0.value]?.appName ?? "?")" }
                 .joined(separator: ",")
         Log.line("apply: \(layout) on \(screen.localizedName) — \(placements.filter { !$0.parked }.count) slotted, \(placements.filter { $0.parked }.count) parked\(pins)")
+        guard Log.verbose else { return }
         for p in placements {
             let name = windowsById[p.id]?.appName ?? "?"
             let where_ = p.parked ? "PARKED" : (p.slot.map { $0.rawValue } ?? "?")

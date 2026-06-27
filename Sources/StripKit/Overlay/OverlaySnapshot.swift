@@ -1,8 +1,9 @@
 import AppKit
+import SwiftUI
 
 /// One chip in the film rail. Mirrors the prototype's `rail` items
 /// (`Strip Window Manager.dc.html`, lines 269-278).
-public struct RailItem: Identifiable {
+public struct RailItem: Identifiable, Equatable {
     public let id: CGWindowID
     /// Single-character app chip (`Theme.letter`).
     public let letter: String
@@ -34,7 +35,67 @@ public struct RailItem: Identifiable {
         self.pinned = pinned
         self.aspect = aspect
     }
+
+    /// `accent` is an `NSColor` (a class) so equality can't be auto-synthesized — compare it via
+    /// `isEqual`. Drives the overlay's skip-when-unchanged pre-filter (don't invalidate SwiftUI when
+    /// the rail is identical, e.g. a spring-cycle re-apply).
+    public static func == (lhs: RailItem, rhs: RailItem) -> Bool {
+        lhs.id == rhs.id && lhs.letter == rhs.letter && lhs.appName == rhs.appName
+            && lhs.title == rhs.title && lhs.accent.isEqual(rhs.accent) && lhs.assigned == rhs.assigned
+            && lhs.active == rhs.active && lhs.pinned == rhs.pinned && lhs.aspect == rhs.aspect
+    }
 }
+
+/// The status pill's render-affecting strings, pulled out of `OverlaySnapshot` so the pill view can
+/// observe just these and skip re-rendering when they're unchanged (e.g. `clock` is "h:mm", so the
+/// pill doesn't churn every apply). Deliberately excludes `screen`/`NSColor` (not rendered as text).
+public struct StatusFields: Equatable {
+    public let activeApp: String
+    public let layoutLabel: String
+    public let modeLabel: String
+    public let transLabel: String
+    public let clock: String
+
+    public init(_ s: OverlaySnapshot) {
+        activeApp = s.activeApp
+        layoutLabel = s.layoutLabel
+        modeLabel = s.modeLabel
+        transLabel = s.transLabel
+        clock = s.clock
+    }
+
+    public init(activeApp: String = "", layoutLabel: String = "", modeLabel: String = "",
+                transLabel: String = "", clock: String = "") {
+        self.activeApp = activeApp
+        self.layoutLabel = layoutLabel
+        self.modeLabel = modeLabel
+        self.transLabel = transLabel
+        self.clock = clock
+    }
+
+    /// Placeholder for the model's initial state before the first render.
+    public static let empty = StatusFields()
+}
+
+/// Stable, observable backing store for the overlay's SwiftUI views. The hosting `rootView`s are set
+/// once (see `OverlayController.init`); each render mutates these `@Published` fields so SwiftUI diffs
+/// incrementally instead of rebuilding the whole tree — the lever that keeps the overlay render off
+/// the animation's critical path. Mirrors the `ThumbnailStore`/`OverviewSelection` pattern.
+public final class OverlayModel: ObservableObject {
+    @Published public var rail: [RailItem]
+    @Published public var status: StatusFields
+
+    public init(rail: [RailItem], status: StatusFields) {
+        self.rail = rail
+        self.status = status
+    }
+}
+
+/// Whether the rail panel needs a re-fit + reposition. The rail is center-anchored and constant-width
+/// during a slide (fixed-size chips, constant count), so only a change in chip count moves its frame;
+/// a moving `active` highlight repaints inside the existing frame. (Screen changes are handled
+/// separately by identity at the call site.) Pure so it's unit-testable without AppKit.
+public func railNeedsRefit(oldCount: Int, newCount: Int) -> Bool { oldCount != newCount }
 
 /// Everything the overlay chrome needs to render one pass. The controller emits this after every
 /// `apply()`; M4 consumes it to draw the film rail and the status pill.

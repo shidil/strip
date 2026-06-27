@@ -29,10 +29,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onRender = { [weak self] snapshot in self?.overlay.update(snapshot) }
         controller.onFocusFrame = { [weak self] frame in self?.overlay.updateFocusRing(frame) }
         controller.refreshAndApply()
-        hotkeys.onCommand = { [weak self] in self?.handle($0) }
+        hotkeys.onCommand = { [weak self] command, repeated in self?.handle(command, repeated: repeated) }
         hotkeys.start()
         // Auto-react (M6): re-tile whenever windows/apps come and go, debounced into one reconcile.
         observer.onReconcile = { [weak self] in self?.controller.refreshAndApply() }
+        // Perf 1.1: suppress the reconcile our own focus()-driven app activation would otherwise cause.
+        controller.onWillActivate = { [weak self] pid in self?.observer.ignoreActivation(of: pid) }
+        // Perf 1.1 (second half): route a pure external activation/focus event to the lightweight path
+        // — skip the full allWindows() sweep when the focused window is already managed.
+        observer.onFocusActivation = { [weak self] pid, id in
+            self?.controller.handleExternalActivation(pid: pid, focusedWindowID: id)
+        }
         // Respect user drags (M7): tell user moves/resizes from the animator's own writes, and act on
         // a finished drag — snap back, or keep the dominant window's resize.
         observer.isAnimatorDriving = { [weak self] id in self?.controller.isDriving(id) ?? false }
@@ -50,8 +57,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.unparkAllOnScreen()
     }
 
-    /// Route a hotkey command to the controller.
-    private func handle(_ command: HotkeyCommand) {
+    /// Route a hotkey command to the controller. `repeated` is true for OS auto-repeats (held key),
+    /// which navigation paces to a watchable cadence instead of the full repeat rate.
+    private func handle(_ command: HotkeyCommand, repeated: Bool = false) {
         // ⌃⌥0 toggles the release/suspend escape hatch.
         if case .releaseAll = command { controller.releaseAll(); rebuildMenu(); return }
         // Any explicit layout/navigation command resumes management first; overlay-only keys don't,
@@ -61,10 +69,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         default: controller.resumeIfSuspended()
         }
         switch command {
-        case .slidePrev: controller.rotate(-1)
-        case .slideNext: controller.rotate(1)
-        case .focusPrev: controller.focusMove(-1)
-        case .focusNext: controller.focusMove(1)
+        case .slidePrev: controller.rotate(-1, repeated: repeated)
+        case .slideNext: controller.rotate(1, repeated: repeated)
+        case .focusPrev: controller.focusMove(-1, repeated: repeated)
+        case .focusNext: controller.focusMove(1, repeated: repeated)
         case .movePrev: controller.moveWindow(-1)
         case .moveNext: controller.moveWindow(1)
         case .cols(let n): controller.setCols(n)

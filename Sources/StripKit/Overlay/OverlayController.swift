@@ -11,9 +11,22 @@ import SwiftUI
 /// Clicking a rail chip centers that window (`onCenter`).
 public final class OverlayController {
     private let railPanel: NSPanel
-    private let railHosting: NSHostingView<AnyView>
+    private let railHosting: NSHostingView<RailHost>
     private let statusPanel: NSPanel
-    private let statusHosting: NSHostingView<AnyView>
+    private let statusHosting: NSHostingView<StatusHost>
+    /// Stable backing store for the two hosted SwiftUI views — set once, mutated per render so SwiftUI
+    /// updates incrementally instead of rebuilding the tree (the render-cost fix).
+    private let model = OverlayModel(rail: [], status: .empty)
+    /// Last rail geometry inputs, so we only re-fit/reposition the rail panel when they actually change
+    /// (a slide keeps the count constant → the panel frame is untouched, the highlight moves inside it).
+    private var lastRailCount = -1
+    private weak var lastRailScreen: NSScreen?
+    /// The status panel is fixed-geometry (full visible width, fixed height) so the pill never forces a
+    /// synchronous layout on a slide — it's only (re)positioned when the display changes.
+    private weak var lastStatusScreen: NSScreen?
+    /// Height of the full-width transparent strip the status pill is centered within (tall enough to
+    /// not clip the pill's drop shadow). The extra space is click-through (`ignoresMouseEvents`).
+    private static let statusStripHeight: CGFloat = 70
     private let focusRingPanel: NSPanel
     private var helpPanel: NSPanel?
     private var overviewPanel: NSPanel?
@@ -57,13 +70,19 @@ public final class OverlayController {
     private let overviewSelection = OverviewSelection()
 
     public init() {
-        railHosting = NSHostingView(rootView: AnyView(EmptyView()))
-        statusHosting = NSHostingView(rootView: AnyView(EmptyView()))
+        // Stable roots: set once, then drive incremental updates by mutating `model` (perf: overlay
+        // render). The rail's onTap reads `self?.onCenter` dynamically, so it stays correct even though
+        // `onCenter` is assigned later by AppDelegate.
+        let model = self.model
+        railHosting = NSHostingView(rootView: RailHost(model: model, onTap: { _ in }))
+        statusHosting = NSHostingView(rootView: StatusHost(model: model))
         railPanel = Self.makePanel(level: .statusBar)
         statusPanel = Self.makePanel(level: .statusBar)
         focusRingPanel = Self.makePanel(level: .statusBar)
         railPanel.contentView = railHosting
         statusPanel.contentView = statusHosting
+        // The status pill is display-only; its wide fixed panel must not eat clicks meant for windows.
+        statusPanel.ignoresMouseEvents = true
 
         // The ring is a non-interactive layer border that frames the focused window.
         focusRingPanel.ignoresMouseEvents = true
@@ -73,32 +92,83 @@ public final class OverlayController {
         ringView.layer?.cornerRadius = Self.ringRadius
         ringView.layer?.borderColor = NSColor.white.cgColor
         focusRingPanel.contentView = ringView
+
+        // Now that all stored properties exist, install the real tap handler once (reads onCenter live).
+        railHosting.rootView = RailHost(model: model, onTap: { [weak self] id in self?.onCenter?(id) })
     }
+
+    /// Latest snapshot awaiting render, and whether a coalesced render is already queued. Re-rendering
+    /// the rail rebuilds two `NSHostingView` rootViews and forces synchronous layout twice — ~5–8ms on
+    /// the main thread — and the rail's active chip moves on every slide step, so an unthrottled render
+    /// per `apply()` is the residual hitch under a fast/held slide. We throttle to ~display rate with a
+    /// leading + trailing edge: render immediately if idle, else coalesce into one trailing render that
+    /// carries the *latest* snapshot, so the final state is always correct but intermediates drop.
+    private var pendingSnapshot: OverlaySnapshot?
+    private var renderScheduled = false
+    private var lastRenderAt = Date.distantPast
+    private static let minRenderInterval: TimeInterval = 1.0 / 60.0
 
     /// Re-render the rail + status pill for the latest state and reposition them on the active display.
     public func update(_ snapshot: OverlaySnapshot) {
         onMain {
-            self.lastScreen = snapshot.screen
-            self.lastSnapshot = snapshot
-            self.focusAccent = snapshot.activeAccent ?? .white
-            // Keep an open overview in sync with the live ring.
-            if self.overviewPanel != nil { self.renderOverview(into: self.overviewPanel!, snapshot) }
-            self.focusRingPanel.contentView?.layer?.borderColor = self.focusAccent.cgColor
-            let vis = snapshot.screen.visibleFrame
-
-            self.railHosting.rootView = AnyView(
-                FilmRailView(items: snapshot.rail) { [weak self] id in self?.onCenter?(id) }
-            )
-            let railSize = self.fit(self.railHosting, in: self.railPanel)
-            self.railPanel.setFrameOrigin(NSPoint(x: vis.midX - railSize.width / 2, y: vis.minY + 16))
-            self.show(self.railPanel)
-
-            self.statusHosting.rootView = AnyView(StatusPillView(snapshot: snapshot))
-            let statusSize = self.fit(self.statusHosting, in: self.statusPanel)
-            self.statusPanel.setFrameOrigin(NSPoint(x: vis.midX - statusSize.width / 2,
-                                                    y: vis.maxY - statusSize.height - 6))
-            self.show(self.statusPanel)
+            self.pendingSnapshot = snapshot
+            // Keep an open overview perfectly in sync with the live ring (cheap; not throttled).
+            if let panel = self.overviewPanel { self.renderOverview(into: panel, snapshot) }
+            guard !self.renderScheduled else { return } // a trailing render will pick up this snapshot
+            let since = Date().timeIntervalSince(self.lastRenderAt)
+            if since >= Self.minRenderInterval {
+                self.renderNow()
+            } else {
+                self.renderScheduled = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + (Self.minRenderInterval - since)) {
+                    [weak self] in
+                    self?.renderScheduled = false
+                    self?.renderNow()
+                }
+            }
         }
+    }
+
+    /// Render the latest pending snapshot now (must be on the main thread). The expensive rail/status
+    /// rebuild lives here so `update(_:)` can throttle how often it runs.
+    private func renderNow() {
+        guard let snapshot = pendingSnapshot else { return }
+        let sp = Signpost.log
+        let renderState = sp.beginInterval("overlayRender")
+        defer { sp.endInterval("overlayRender", renderState) }
+        lastRenderAt = Date()
+        lastScreen = snapshot.screen
+        lastSnapshot = snapshot
+        focusAccent = snapshot.activeAccent ?? .white
+        focusRingPanel.contentView?.layer?.borderColor = focusAccent.cgColor
+        let vis = snapshot.screen.visibleFrame
+
+        // Incremental updates: mutate the model only when its content actually changed, so SwiftUI
+        // diffs a few chips / strings instead of rebuilding the tree (perf: overlay render).
+        if model.rail != snapshot.rail { model.rail = snapshot.rail }
+        let status = StatusFields(snapshot)
+        if model.status != status { model.status = status }
+
+        // The rail is center-anchored and constant-width during a slide, so only re-fit + reposition
+        // it when the chip count or display changed; otherwise the moving highlight repaints in place.
+        if railNeedsRefit(oldCount: lastRailCount, newCount: snapshot.rail.count)
+            || lastRailScreen !== snapshot.screen {
+            let railSize = fit(railHosting, in: railPanel)
+            railPanel.setFrameOrigin(NSPoint(x: vis.midX - railSize.width / 2, y: vis.minY + 16))
+            lastRailCount = snapshot.rail.count
+            lastRailScreen = snapshot.screen
+        }
+        show(railPanel)
+
+        // The pill lives in a fixed full-width strip at the top and centers itself inside (StatusHost),
+        // so a changing app-name width no longer forces a synchronous layout here — we only place the
+        // panel when the display changes. SwiftUI re-centers the pill on its own async pass.
+        if lastStatusScreen !== snapshot.screen {
+            statusPanel.setFrame(NSRect(x: vis.minX, y: vis.maxY - Self.statusStripHeight,
+                                        width: vis.width, height: Self.statusStripHeight), display: false)
+            lastStatusScreen = snapshot.screen
+        }
+        show(statusPanel)
     }
 
     /// Reposition the focus ring around the focused window's live frame (Quartz global), or hide it
@@ -234,7 +304,7 @@ public final class OverlayController {
     }
 
     /// Size a panel to its SwiftUI content's fitting size and return that size.
-    private func fit(_ hosting: NSHostingView<AnyView>, in panel: NSPanel) -> NSSize {
+    private func fit<V: View>(_ hosting: NSHostingView<V>, in panel: NSPanel) -> NSSize {
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         panel.setContentSize(size)

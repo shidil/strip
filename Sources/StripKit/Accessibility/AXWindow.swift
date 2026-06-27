@@ -63,9 +63,14 @@ public struct AXWindow {
     /// position, then size again defeats apps that clamp size to their min/max during the move.
     /// Returns the most telling `AXError`: a hard `.invalidUIElement` (the window is gone) wins, so
     /// the animator's AX-drop recovery (M7) can tell a dead element from a transient hiccup.
+    ///
+    /// `skipInitialResize` drops the *leading* `setSize` — safe only on a pure-move frame (size
+    /// unchanged from the last write), where the clamp-defeat first write does nothing. The caller
+    /// (the animator, which holds per-window size history) decides; the trailing `setSize` and the
+    /// full double-set on resize frames are always preserved. (perf 1.2)
     @discardableResult
-    public func setFrame(_ rect: CGRect) -> AXError {
-        let a = setSize(rect.size)
+    public func setFrame(_ rect: CGRect, skipInitialResize: Bool = false) -> AXError {
+        let a: AXError = skipInitialResize ? .success : setSize(rect.size)
         let b = setPosition(rect.origin)
         let c = setSize(rect.size)
         for e in [a, b, c] where e == .invalidUIElement { return .invalidUIElement }
@@ -98,9 +103,25 @@ public struct AXWindow {
     /// reorders windows within an app; without activating the app the previously-frontmost app keeps
     /// the keyboard. (Standard no-SIP AX focus path, à la Amethyst/yabai.)
     public func focus() {
+        focusAttributes()
+        activateApp()
+    }
+
+    /// The AX-only half of `focus()`: mark this window the app's main + focused window and raise it
+    /// within its app. These are per-element AX writes, so they are **safe off the main thread** (only
+    /// the all-apps `kAXWindows` *enumeration* is main-bound). For a busy Electron app each is a
+    /// multi-ms cross-process round-trip, so the slide hot path runs these off-main (see
+    /// `WindowAnimator.focusAttributes` / `StripController.scheduleFocus`).
+    public func focusAttributes() {
         AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
         AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+    }
+
+    /// The AppKit half of `focus()`: bring this window's app to the foreground. `NSRunningApplication`
+    /// is AppKit and **must run on the main thread** — calling it off-main caused sporadic ~400ms
+    /// main-thread stalls (a hard freeze mid-slide). Cheap on main (~1–2ms).
+    public func activateApp() {
         NSRunningApplication(processIdentifier: pid)?.activate()
     }
 

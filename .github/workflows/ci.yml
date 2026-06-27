@@ -1,0 +1,36 @@
+name: CI
+
+# Strip's engine tests (StripKitTests) are pure and Accessibility-free, so they run headless on a
+# hosted macOS runner with no TCC/Screen-Recording grant. This gates the suite on every PR.
+# Perf-baseline gating (XCTClockMetric) is intentionally NOT here — it is cross-runner noisy
+# (see OPTIMIZATION_PLAN.md task 3.4); this stage is correctness only.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: swift test
+    # macos-15 ships Xcode 16 (Swift 6), required by Package.swift swift-tools-version:6.0.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Run tests
+        run: swift test

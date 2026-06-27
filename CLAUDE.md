@@ -40,6 +40,39 @@ Single test: `swift test --filter StripLayoutTests/testRingWrapsAround` (or a wh
   → Privacy & Security → Accessibility. (The cert reports `CSSMERR_TP_NOT_TRUSTED` and is hidden by
   `security find-identity -v`; detect it without `-v`. codesign + TCC accept it regardless.)
 
+## Performance work — MEASURE FIRST (enforced)
+
+**No performance change lands without a measurement that justifies it.** This is a hard rule, not a
+preference. `MEASURING.md` is the authoritative how-to (signposts, xctrace, DuckDB queries, synthetic
+chord workloads, A/B via `git stash`, fps/freeze/backpressure metrics, screencapture verification) —
+read it before any perf work.
+
+1. **Baseline before touching code.** Capture a trace of the actual hot path with a controlled,
+   repeatable workload and read the p50/p90/**max** (the tail is the bug). If the thing isn't
+   measurable, the *first* change is instrumentation (an `os_signpost` interval/event), not a fix.
+2. **No speculative optimization.** Don't "fix" what you haven't measured. The original review inflated
+   impact by reasoning about 50–100 windows; the real working set is `cols` (default 3). Layout
+   (`placements` p50 0.07ms) was never a bottleneck — measurement said so.
+3. **A/B every change.** Same window set, same workload, before vs after. Prefer a true before/after
+   via `git stash` (see `MEASURING.md`) over trusting a remembered/estimated baseline. Pick the
+   workload that actually exercises the change (a continuous-motion storm and a settle-based reseed can
+   give opposite verdicts).
+4. **Commit with the numbers.** Every perf commit body states the measured before→after **and the
+   exact workload**. Update the `perf-review-2026-06` memory note with the verdict.
+5. **Verify visual changes with eyes**, not just metrics — `screencapture` + inspect, captured *across*
+   a state change so a stale render can't pass (needs Screen Recording permission).
+6. **Respect proven dead ends — don't re-fight them.** Two hard platform limits, each cost a
+   measured, reverted attempt:
+   - **`kAXWindows` enumeration is main-thread-only** (off-main returns degraded data). Per-element AX
+     reads/writes on an already-obtained window element *do* work off-main on a per-pid serial queue.
+     The lever for enumeration cost is **frequency** (don't enumerate on pure focus/activation), not
+     threading. See `mem_search "ax-enumeration-main-bound"`.
+   - **SwiftUI/AppKit view rendering is main-thread-only** — it can't move off-thread. Make it cheap
+     (incremental `@Published` updates, no forced `layoutSubtreeIfNeeded`/rootView rebuild), don't try
+     to relocate it.
+7. **Keep `make test` green** through perf work and **extract pure logic** so new decisions stay
+   headless-testable even when the surrounding code is AppKit/SwiftUI.
+
 ## Architecture (the big picture)
 
 A menu-bar agent (`LSUIElement`, `.accessory`). The command flow is:

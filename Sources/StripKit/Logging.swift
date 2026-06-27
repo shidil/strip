@@ -7,6 +7,10 @@ public enum Log {
     /// Override with the `STRIP_LOG` environment variable; defaults to `/tmp/strip.log`.
     public static let path: String = ProcessInfo.processInfo.environment["STRIP_LOG"] ?? "/tmp/strip.log"
 
+    /// Verbose logging gate (set `STRIP_VERBOSE` to any value). Off by default so the per-command,
+    /// per-window `logState` detail loop doesn't churn allocations on the hot path.
+    public static let verbose: Bool = ProcessInfo.processInfo.environment["STRIP_VERBOSE"] != nil
+
     private static let queue = DispatchQueue(label: "com.spike.strip.log")
     private static let handle: FileHandle? = {
         FileManager.default.createFile(atPath: path, contents: nil)
@@ -22,9 +26,13 @@ public enum Log {
         }
     }
 
-    private static func timestamp() -> String {
+    private static let stampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss.SSS"
-        return f.string(from: Date())
+        return f
+    }()
+
+    private static func timestamp() -> String {
+        stampFormatter.string(from: Date())
     }
 }

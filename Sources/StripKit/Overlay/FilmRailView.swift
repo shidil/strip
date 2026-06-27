@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// Observing wrapper hosted by the rail panel: it watches `OverlayModel.rail` and feeds the pure
+/// `FilmRailView`, so the panel's `rootView` is set once and slide updates flow through `@Published`
+/// (incremental SwiftUI diff) instead of replacing the whole view tree each render. `onTap` is set
+/// once and reads the live callback via the closure passed in.
+struct RailHost: View {
+    @ObservedObject var model: OverlayModel
+    let onTap: (CGWindowID) -> Void
+
+    var body: some View {
+        FilmRailView(items: model.rail, onTap: onTap)
+    }
+}
+
 /// The film rail: a bottom-center pill of one chip per ring window. Faithful to the prototype
 /// (`Strip Window Manager.dc.html`, lines 51-59 + the `rail` model, lines 269-278):
 /// accent + letter chip, dimmed when off the visible strip, white outline on the focused window,

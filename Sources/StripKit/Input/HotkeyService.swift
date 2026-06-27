@@ -35,8 +35,10 @@ public enum OverviewKey {
 /// Requires Accessibility, which Strip already holds. Matched events are consumed; everything else
 /// passes through untouched.
 public final class HotkeyService {
-    /// Invoked on the main thread for each recognized command.
-    public var onCommand: ((HotkeyCommand) -> Void)?
+    /// Invoked on the main thread for each recognized command. `repeated` is true when the keyDown is
+    /// an OS auto-repeat (key held down) rather than a fresh press — so navigation can pace a held key
+    /// instead of advancing at the full repeat rate.
+    public var onCommand: ((_ command: HotkeyCommand, _ repeated: Bool) -> Void)?
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -133,6 +135,13 @@ public final class HotkeyService {
 
 // MARK: - C callback
 
+/// Cached mach timebase for converting `CGEvent.timestamp` (mach ticks) deltas to nanoseconds.
+private let machTimebase: mach_timebase_info_data_t = {
+    var tb = mach_timebase_info_data_t()
+    mach_timebase_info(&tb)
+    return tb
+}()
+
 private func hotkeyTapCallback(
     proxy: CGEventTapProxy, type: CGEventType, event: CGEvent, refcon: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
@@ -140,13 +149,27 @@ private func hotkeyTapCallback(
     let service = Unmanaged<HotkeyService>.fromOpaque(refcon).takeUnretainedValue()
 
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        // The OS disabled our tap — the main run loop blocked past the tap timeout (the Phase 3
+        // failure mode) or the user is typing fast. Count it: a non-zero rate here is the signal that
+        // the tap needs its own thread. (Integer-free event; zero-cost when not tracing.)
+        Signpost.log.emitEvent("tapDisabled")
         service.reEnable()
         return Unmanaged.passUnretained(event)
     }
     guard type == .keyDown, let command = service.command(for: event) else {
         return Unmanaged.passUnretained(event)
     }
-    DispatchQueue.main.async { service.onCommand?(command) }
+    // Headline metric (chord→tap latency): how long the keyDown waited from the window server
+    // creating it until this callback ran. Because the tap source is on the MAIN run loop, this
+    // includes any time the main thread was blocked (e.g. a reconcile) — the Phase 3 cost. CGEvent
+    // timestamps are mach_absolute_time ticks; convert the delta to microseconds (non-allocating).
+    let nowTicks = mach_absolute_time()
+    let evTicks = event.timestamp
+    let deltaTicks = nowTicks > evTicks ? nowTicks - evTicks : 0
+    let latencyUs = deltaTicks &* UInt64(machTimebase.numer) / UInt64(machTimebase.denom) / 1000
+    Signpost.log.emitEvent("chordLatency", "us=\(latencyUs)")
+    let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+    DispatchQueue.main.async { service.onCommand?(command, repeated) }
     return nil // consume
 }
 

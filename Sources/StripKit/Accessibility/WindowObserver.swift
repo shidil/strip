@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import QuartzCore
 
 /// Watches the system for window and app lifecycle changes and fires a single **debounced** callback
 /// so the strip can re-tile itself. This is what makes Strip *auto-react* (M6) instead of only
@@ -21,8 +22,16 @@ import ApplicationServices
 /// own frame writes), it's ignored; otherwise it's a genuine user drag, debounced onto a trailing
 /// edge `onUserDrag` (the user has stopped moving) so we never fight a drag in progress.
 public final class WindowObserver {
-    /// Called (on the main thread, debounced) whenever the window world may have changed.
+    /// Called (on the main thread, debounced) whenever window *membership* may have changed and a full
+    /// re-enumeration is warranted (app launch/quit/hide, window create/destroy/miniaturize).
     public var onReconcile: (() -> Void)?
+
+    /// Called (on the main thread, debounced) on a **pure focus/activation** event (Cmd-Tab,
+    /// focused/main-window-changed) that changed no window membership. Carries the activated app's
+    /// `pid` and the `CGWindowID` of its now-focused window (read cheaply; `nil` if unreadable) so the
+    /// controller can skip the full `allWindows()` sweep when that window is already managed, and only
+    /// fall back to a full reconcile when it's unknown (perf 1.1 second half).
+    public var onFocusActivation: ((_ pid: pid_t, _ focusedWindowID: CGWindowID?) -> Void)?
 
     /// Asked, on the main thread, whether the animator is currently driving a window — so its own
     /// frame writes don't read as user drags. Returns `false` (treat as user) when unset.
@@ -40,6 +49,14 @@ public final class WindowObserver {
     private var watchedWindows: [pid_t: Set<CGWindowID>] = [:]
     private var pending: DispatchWorkItem?
     private let debounceInterval: TimeInterval = 0.075
+
+    /// Sticky path decision for the current debounce window (perf 1.1 second half). Any
+    /// membership-changing event sets `pendingFullReconcile`; pure focus/activation events only record
+    /// `pendingFocusPID`. The trailing edge then takes the full path if *any* membership event landed in
+    /// the window (membership wins), else the lightweight focus path — so a focus event arriving last in
+    /// a burst can't downgrade a real membership change that arrived earlier. Reset on fire.
+    private var pendingFullReconcile = false
+    private var pendingFocusPID: pid_t?
 
     /// Per-window in-flight user gestures: id → did we see a resize (vs. a pure move). Flushed to
     /// `onUserDrag` once the gesture ends.
@@ -61,6 +78,32 @@ public final class WindowObserver {
     private var mouseMonitor: Any?
     private var leftMouseDown = false
     private var reconcileDeferred = false
+
+    /// Self-induced-activation suppression (perf 1.1). When Strip's own `apply()` moves keyboard
+    /// focus it calls `AXWindow.focus()` → `NSRunningApplication.activate()`, which fires *both* a
+    /// `didActivateApplication` (→ `appChanged`) **and** AX focus/main-window-changed notifications on
+    /// the app element (→ the callback's `default` case). Both schedule a full ~40–110ms `allWindows()`
+    /// reconcile that discovers nothing new — the Phase 0 trace's biggest avoidable cost. The
+    /// controller stamps the pid it's about to activate here, and both paths drop events for that pid
+    /// within `selfActivationGrace`. Kept time-based (not one-shot) so it survives whichever of the
+    /// several near-simultaneous events arrives first.
+    private var selfActivatedPID: pid_t?
+    private var selfActivatedUntil: CFTimeInterval = 0
+    private let selfActivationGrace: CFTimeInterval = 0.2
+
+    /// Tell the observer that Strip itself is about to activate `pid` (to move focus), so the
+    /// resulting activation/focus notifications don't trigger a redundant reconcile. `now` is
+    /// injectable for tests; production callers use the monotonic media clock.
+    public func ignoreActivation(of pid: pid_t, now: CFTimeInterval = CACurrentMediaTime()) {
+        selfActivatedPID = pid
+        selfActivatedUntil = now + selfActivationGrace
+    }
+
+    /// Whether an activation/focus event for `pid` at `now` is one Strip induced and should be
+    /// ignored. Pure and side-effect-free so it can be unit-tested without AX or notifications.
+    func isSelfInducedActivation(pid: pid_t, now: CFTimeInterval) -> Bool {
+        pid == selfActivatedPID && now < selfActivatedUntil
+    }
 
     /// App-element notifications we subscribe to. Create/focus/main cover the common "window
     /// appeared / focus moved" cases; miniaturize covers windows leaving and rejoining the strip.
@@ -99,8 +142,11 @@ public final class WindowObserver {
             guard let self else { return }
             if event.type == .leftMouseDown { self.leftMouseDown = true } else { self.handleMouseUp() }
         }
-        for name in [NSWorkspace.didActivateApplicationNotification,
-                     NSWorkspace.didHideApplicationNotification,
+        // Activation is a *pure focus* event (no membership change) → lightweight path. Hide/unhide
+        // change which windows are tileable → full reconcile.
+        nc.addObserver(self, selector: #selector(appActivated(_:)),
+                       name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        for name in [NSWorkspace.didHideApplicationNotification,
                      NSWorkspace.didUnhideApplicationNotification] {
             nc.addObserver(self, selector: #selector(appChanged(_:)), name: name, object: nil)
         }
@@ -120,6 +166,8 @@ public final class WindowObserver {
         if let m = mouseMonitor { NSEvent.removeMonitor(m); mouseMonitor = nil }
         leftMouseDown = false
         reconcileDeferred = false
+        pendingFullReconcile = false
+        pendingFocusPID = nil
     }
 
     // MARK: - Workspace notifications
@@ -140,13 +188,29 @@ public final class WindowObserver {
         scheduleReconcile()
     }
 
+    /// App hide/unhide: which windows are tileable changed, so take the full reconcile path.
     @objc private func appChanged(_ note: Notification) {
-        // Re-attach defensively: a launch-time AXObserverCreate can fail before the app is ready,
-        // and activation is a reliable second chance to hook it.
         if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
             attach(to: app)
         }
         scheduleReconcile()
+    }
+
+    /// App activation (Cmd-Tab / `open -a` of a running app): a *pure focus* event that changes no
+    /// window membership. Take the lightweight path so we don't pay the full ~32ms `allWindows()`
+    /// sweep when the user merely switched apps (perf 1.1 second half).
+    @objc private func appActivated(_ note: Notification) {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+            scheduleReconcile() // no app info → be safe, full reconcile
+            return
+        }
+        // Skip the activation Strip's own focus() caused: we triggered it and nothing changed.
+        if isSelfInducedActivation(pid: app.processIdentifier, now: CACurrentMediaTime()) { return }
+        // Re-attach defensively: a launch-time AXObserverCreate can fail before the app is ready, and
+        // activation is a reliable second chance to hook it. (Its per-app `watchAllWindows` cost is a
+        // separate concern — Task 1.4 — not this change's full all-apps sweep.)
+        attach(to: app)
+        scheduleFocusReconcile(pid: app.processIdentifier)
     }
 
     // MARK: - Per-app AX observers
@@ -156,26 +220,30 @@ public final class WindowObserver {
         let pid = app.processIdentifier
         guard pid > 0 else { return }
 
-        let observer: AXObserver
-        if let existing = observers[pid] {
-            observer = existing
-        } else {
-            var created: AXObserver?
-            guard AXObserverCreate(pid, Self.callback, &created) == .success, let created else { return }
-            observer = created
-            let appElement = AXUIElementCreateApplication(pid)
-            let refcon = Unmanaged.passUnretained(self).toOpaque()
-            for n in Self.notifications {
-                // Some apps reject some notifications on the app element — harmless; ignore the result.
-                AXObserverAddNotification(observer, appElement, n, refcon)
-            }
-            CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
-            observers[pid] = observer
-        }
+        // Observer already hooked for this app → nothing to do. We deliberately do NOT re-run
+        // `watchAllWindows` here: it's a per-app `kAXWindows` copy on the main thread (measured at
+        // p50 21ms / p90 48ms for Electron apps) that used to run on *every* Cmd-Tab via this
+        // defensive re-attach (perf 1.4). It's redundant once the observer exists — windows that
+        // appear after attach are watched incrementally by `kAXWindowCreated → watch(window:)`, and
+        // the app-element notifications (incl. create) were already subscribed at first attach. The
+        // re-attach's only real value was a second chance at `AXObserverCreate`, which only matters
+        // when it *failed* before (observer still nil) — handled by the create path below.
+        if observers[pid] != nil { return }
 
-        // (Re)sync per-window move/resize watches. Runs on every activation too — a launch-time
-        // enumeration can fire before the app's windows exist, and re-activation is a reliable
-        // second chance; rebuilding the set here also keeps it bounded as windows come and go.
+        var created: AXObserver?
+        guard AXObserverCreate(pid, Self.callback, &created) == .success, let created else { return }
+        let observer = created
+        let appElement = AXUIElementCreateApplication(pid)
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        for n in Self.notifications {
+            // Some apps reject some notifications on the app element — harmless; ignore the result.
+            AXObserverAddNotification(observer, appElement, n, refcon)
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        observers[pid] = observer
+
+        // Watch the app's already-existing windows once, at first attach (the only time the app
+        // element's `kAXWindowCreated` won't fire for them). New windows arrive via that notification.
         watchAllWindows(of: pid, with: observer)
     }
 
@@ -197,16 +265,37 @@ public final class WindowObserver {
             me.watch(window: element)
             me.scheduleReconcile()
         default:
-            me.scheduleReconcile()
+            // Everything else: focus/main-window-changed (pure focus) vs destroy/miniaturize
+            // (membership). Route by classification.
+            switch reconcileKind(for: name) {
+            case .lightweight:
+                // Focused/main-window-changed posts on the app element. Drop the one Strip's own
+                // apply() induces for the pid we just activated; otherwise take the lightweight path.
+                var pid: pid_t = 0
+                guard AXUIElementGetPid(element, &pid) == .success else { me.scheduleReconcile(); return }
+                if me.isSelfInducedActivation(pid: pid, now: CACurrentMediaTime()) { return }
+                me.scheduleFocusReconcile(pid: pid)
+            case .full:
+                // kAXUIElementDestroyed / kAXWindowMiniaturized / kAXWindowDeminiaturized — membership.
+                me.scheduleReconcile()
+            }
         }
     }
 
     /// Add move/resize notifications to every current window of `pid`, rebuilding the watched-id set.
     private func watchAllWindows(of pid: pid_t, with observer: AXObserver) {
+        // This is a per-app `kAXWindows` copy on the main thread — the residual main-thread cost on
+        // the activation path after perf 1.1 (it runs on every Cmd-Tab via the defensive re-attach).
+        // Signposted so Task 1.4 can quantify it before deciding whether to skip it. (perf 1.4 measure)
+        let sp = Signpost.log
+        let watchState = sp.beginInterval("watchWindows")
         let appElement = AXUIElementCreateApplication(pid)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &value) == .success,
-              let windows = value as? [AXUIElement] else { return }
+              let windows = value as? [AXUIElement] else {
+            sp.endInterval("watchWindows", watchState, "pid=\(pid) windows=0")
+            return
+        }
         var ids: Set<CGWindowID> = []
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         for win in windows {
@@ -215,6 +304,7 @@ public final class WindowObserver {
             for n in Self.windowNotifications { AXObserverAddNotification(observer, win, n, refcon) }
         }
         watchedWindows[pid] = ids
+        sp.endInterval("watchWindows", watchState, "pid=\(pid) windows=\(ids.count)")
     }
 
     /// Add move/resize notifications to a single freshly-created window element.
@@ -287,14 +377,82 @@ public final class WindowObserver {
 
     // MARK: - Debounce
 
-    /// Coalesce a burst of notifications into a single trailing-edge reconcile on the main thread.
+    /// Whether an AX notification should trigger a full re-enumeration or just a lightweight focus
+    /// re-center. Pure and side-effect-free so it can be unit-tested without AX. Only focused/main-
+    /// window-changed are membership-preserving; everything else (destroy, miniaturize, …) is full.
+    /// Move/resize are handled by the user-drag path, never routed here.
+    enum ReconcileKind { case full, lightweight }
+    static func reconcileKind(for notification: String) -> ReconcileKind {
+        switch notification {
+        case kAXFocusedWindowChangedNotification,
+             kAXMainWindowChangedNotification:
+            return .lightweight
+        default:
+            return .full
+        }
+    }
+
+    /// The single action the trailing debounce edge should take given what landed during the window.
+    /// Membership wins: any full-reconcile request forces `.full`; otherwise a recorded focus pid
+    /// yields `.lightweight`; an empty window yields `.none`. Pure → unit-tested.
+    enum BatchAction: Equatable { case full, lightweight(pid_t), none }
+    static func batchAction(sawMembership: Bool, focusPID: pid_t?) -> BatchAction {
+        if sawMembership { return .full }
+        if let pid = focusPID { return .lightweight(pid) }
+        return .none
+    }
+
+    /// Request a **full** reconcile (membership may have changed). Sticky for the debounce window.
     private func scheduleReconcile() {
+        // Reconcile fire-rate: each emit is one (debounced) reconcile request. During a Cmd-Tab/
+        // focus storm this rate is the R1 cost driver — Phase 1 (1.1) drops the no-op ones.
+        Signpost.log.emitEvent("reconcile")
+        pendingFullReconcile = true
+        armDebounce()
+    }
+
+    /// Request a **lightweight** focus re-center for `pid` (a pure focus/activation event). Only takes
+    /// effect at the trailing edge if no membership event also landed in the same window.
+    private func scheduleFocusReconcile(pid: pid_t) {
+        Signpost.log.emitEvent("reconcile")
+        pendingFocusPID = pid
+        armDebounce()
+    }
+
+    /// Coalesce a burst of notifications into a single trailing-edge fire on the main thread.
+    private func armDebounce() {
         // Hold reconciles during a drag — the grab itself fires a focus change, and reconciling
         // mid-drag would write the held window back to its slot. Caught up on mouse-up.
         if leftMouseDown { reconcileDeferred = true; return }
         pending?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.onReconcile?() }
+        let work = DispatchWorkItem { [weak self] in self?.fireReconcile() }
         pending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + debounceInterval, execute: work)
+    }
+
+    /// Trailing edge: pick the path from the sticky flags, reset them, and dispatch.
+    private func fireReconcile() {
+        let action = Self.batchAction(sawMembership: pendingFullReconcile, focusPID: pendingFocusPID)
+        pendingFullReconcile = false
+        pendingFocusPID = nil
+        switch action {
+        case .full:
+            onReconcile?()
+        case .lightweight(let pid):
+            // Cheap per-element read (main thread): one `kAXFocusedWindow` on a known app element —
+            // unlike the all-apps `kAXWindows` copy, this is not main-bound-degraded and is ~1 IPC.
+            onFocusActivation?(pid, focusedWindowID(of: pid))
+        case .none:
+            break
+        }
+    }
+
+    /// The `CGWindowID` of `pid`'s currently-focused window, or `nil` if unreadable.
+    private func focusedWindowID(of pid: pid_t) -> CGWindowID? {
+        let appElement = AXUIElementCreateApplication(pid)
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &ref) == .success,
+              let ref else { return nil }
+        return axWindowID(ref as! AXUIElement)
     }
 }

@@ -7,6 +7,17 @@ import ApplicationServices
 public final class AccessibilityService {
     public init() {}
 
+    // MARK: - Immutable-attribute caches (perf 2.5a)
+
+    /// Per-window AX attributes that never change for an element's lifetime, memoized so a repeated
+    /// enumeration scan doesn't re-pay their IPC. `role`/`subrole`/resizability are immutable;
+    /// `frame` and `isMinimized` are deliberately NOT cached — they're mutable and, off-Space, AX
+    /// returns stale/zero geometry, so they must be read live every scan. Keyed by the AX element;
+    /// pruned to the windows actually seen each scan so closed windows don't leak.
+    private let roleCache = AXAttrCache<AXElementKey, String?>()
+    private let subroleCache = AXAttrCache<AXElementKey, String?>()
+    private let resizableCache = AXAttrCache<AXElementKey, Bool>()
+
     // MARK: - Permission
 
     /// Whether this process currently holds the Accessibility (AXIsProcessTrusted) grant.
@@ -34,15 +45,27 @@ public final class AccessibilityService {
 
     /// All managed standard windows across every running regular app, on every display.
     public func allWindows() -> [ManagedWindow] {
+        let sp = Signpost.log
+        let state = sp.beginInterval("allWindows")
         var result: [ManagedWindow] = []
+        var scannedApps = 0
+        var seen = Set<AXElementKey>()
         for app in NSWorkspace.shared.runningApplications
         where app.activationPolicy == .regular && !app.isTerminated {
-            result.append(contentsOf: windows(for: app))
+            scannedApps += 1
+            result.append(contentsOf: windows(for: app, seen: &seen))
         }
+        // Drop cache entries for windows that have gone away (perf 2.5a) so the immutable-attr caches
+        // track the live window set rather than growing without bound.
+        roleCache.retain(seen)
+        subroleCache.retain(seen)
+        resizableCache.retain(seen)
+        // Integer interpolation only — non-allocating; quantifies the R1 enumeration cost.
+        sp.endInterval("allWindows", state, "apps=\(scannedApps) windows=\(result.count)")
         return result
     }
 
-    private func windows(for app: NSRunningApplication) -> [ManagedWindow] {
+    private func windows(for app: NSRunningApplication, seen: inout Set<AXElementKey>) -> [ManagedWindow] {
         let pid = app.processIdentifier
         guard pid > 0 else { return [] }
         let appElement = AXUIElementCreateApplication(pid)
@@ -55,10 +78,14 @@ public final class AccessibilityService {
         let accentKey = app.bundleIdentifier ?? appName
 
         return elements.compactMap { element -> ManagedWindow? in
+            seen.insert(AXElementKey(element))
             let w = AXWindow(element: element, pid: pid)
-            guard Self.classify(w) == .managed, let frame = w.frame, let id = axWindowID(element) else {
-                return nil
-            }
+            // `frame` is two AX IPC round-trips (position + size) and is uncached; classify reads it
+            // and hands it back so we don't read it a second time here (perf 1.3 — halves the frame
+            // IPC per managed window per scan, the dominant cost in `allWindows`). The immutable
+            // role/subrole/resizable reads are served from the caches above (perf 2.5a).
+            let (cls, frame) = classifyWithFrame(w)
+            guard cls == .managed, let frame, let id = axWindowID(element) else { return nil }
             return ManagedWindow(
                 id: id, ax: w, appName: appName, accentKey: accentKey,
                 title: w.title ?? appName, frame: frame
@@ -77,17 +104,47 @@ public final class AccessibilityService {
 
     /// Conservative classifier (M6): tile only clearly-standard, resizable, usable-size windows;
     /// float the clear-cut leave-alone cases (sheets/dialogs/panels, non-resizable). No per-app
-    /// denylist yet — that arrives with the config file in M9.
+    /// denylist yet — that arrives with the config file in M9. Uncached — for external/diagnostic
+    /// use, off the enumeration hot path; the cached `classifyWithFrame` is what `allWindows` uses.
     public static func classify(_ w: AXWindow) -> WindowClassification {
-        guard w.role == (kAXWindowRole as String) else { return .ignored }
-        if w.isMinimized { return .ignored }
-        guard let f = w.frame, f.width >= 80, f.height >= 80 else { return .ignored }
+        Self.classifyGates(role: { w.role }, isMinimized: { w.isMinimized }, frame: { w.frame },
+                           subrole: { w.subrole }, resizable: { w.isResizable }).classification
+    }
+
+    /// Classify `w` and return the frame read while doing so, so a caller that also needs the frame
+    /// (the enumeration hot path) doesn't pay a second `kAXPosition`+`kAXSize` round-trip (perf 1.3).
+    /// The immutable role/subrole/resizable reads are routed through the per-element caches (perf
+    /// 2.5a); `frame`/`isMinimized` stay live. Each read is still gated lazily — a non-window or
+    /// minimized element pays no extra IPC, and the gate order is identical to before. `frame` is
+    /// nil when not (yet) read.
+    func classifyWithFrame(_ w: AXWindow) -> (classification: WindowClassification, frame: CGRect?) {
+        let key = AXElementKey(w.element)
+        return Self.classifyGates(
+            role: { self.roleCache.value(for: key) { w.role } },
+            isMinimized: { w.isMinimized },
+            frame: { w.frame },
+            subrole: { self.subroleCache.value(for: key) { w.subrole } },
+            resizable: { self.resizableCache.value(for: key) { w.isResizable } }
+        )
+    }
+
+    /// Pure gate logic shared by the cached (hot-path) and uncached classifiers. Reads are passed as
+    /// lazy closures so each is evaluated only when its gate is reached — preserving the exact lazy
+    /// IPC order — while the caller decides which reads are cached vs. live.
+    private static func classifyGates(
+        role: () -> String?, isMinimized: () -> Bool, frame: () -> CGRect?,
+        subrole: () -> String?, resizable: () -> Bool
+    ) -> (classification: WindowClassification, frame: CGRect?) {
+        guard role() == (kAXWindowRole as String) else { return (.ignored, nil) }
+        if isMinimized() { return (.ignored, nil) }
+        let f = frame()
+        guard let rect = f, rect.width >= 80, rect.height >= 80 else { return (.ignored, f) }
         // Anything that isn't a plain standard window — dialogs, sheets, system dialogs, floating
         // panels, palettes, unknown subroles — is left in place. (Some apps report no subrole for
         // their main window; allow that as standard.)
-        if let sub = w.subrole, sub != (kAXStandardWindowSubrole as String) { return .floating }
+        if let sub = subrole(), sub != (kAXStandardWindowSubrole as String) { return (.floating, f) }
         // A window we can't resize can't be tiled sensibly — leave it where the app put it.
-        if !w.isResizable { return .floating }
-        return .managed
+        if !resizable() { return (.floating, f) }
+        return (.managed, f)
     }
 }

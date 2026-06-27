@@ -31,6 +31,12 @@ public final class WindowAnimator: NSObject {
     private var pendingSnapIDs: Set<CGWindowID> = []
 
     private var entries: [CGWindowID: Entry] = [:]
+    /// The last frame we actually enqueued an AX write for, per window. Drives two perf-1.2 cuts:
+    /// (a) once a window is settled and its target frame has been written, stop re-writing it every
+    /// tick just because a sibling is still moving; (b) when the next frame's size matches this one's
+    /// (a pure slide), skip the clamp-defeat leading `setSize`. Keyed on the full frame so a snap to a
+    /// *new* position still differs and writes. Cleared whenever a window leaves the animation.
+    private var lastWritten: [CGWindowID: CGRect] = [:]
     private var inFlight: Set<CGWindowID> = []
     private var queues: [pid_t: DispatchQueue] = [:]
     private var suppressedApps: [pid_t: AXUIElement] = [:]
@@ -65,14 +71,21 @@ public final class WindowAnimator: NSObject {
 
     public override init() { super.init() }
 
-    /// Set/replace the full set of windows to drive. New windows start from their live frame so
-    /// they glide from where they are; windows omitted here stop being animated.
-    public func animate(_ targets: [(ax: AXWindow, frame: CGRect)], on screen: NSScreen) {
+    /// Set/replace the full set of windows to drive. A new window's spring is seeded from `current`
+    /// (its live frame, which the controller already read during `refresh()`) so it glides from where
+    /// it is — no synchronous AX read on the main thread here (perf: animate seeding). Windows omitted
+    /// here stop being animated.
+    public func animate(_ targets: [(ax: AXWindow, frame: CGRect, current: CGRect)], on screen: NSScreen) {
+        let sp = Signpost.log
+        let animateState = sp.beginInterval("animate")
+        defer { sp.endInterval("animate", animateState, "targets=\(targets.count)") }
+
         let keepIds = Set(targets.map { $0.ax.windowID })
 
         // Drop windows no longer present.
         for id in entries.keys where !keepIds.contains(id) {
-            entries[id] = nil; inFlight.remove(id); drivenUntil[id] = nil; failures.forget(id)
+            entries[id] = nil; inFlight.remove(id); drivenUntil[id] = nil
+            lastWritten[id] = nil; failures.forget(id)
         }
 
         for t in targets {
@@ -85,16 +98,18 @@ public final class WindowAnimator: NSObject {
                 if snap { existing.spring = RectSpring(t.frame) } // already at target → one write, no staircase
                 entries[id] = existing
             } else {
-                let start = snap ? t.frame : (t.ax.frame ?? t.frame)
+                let start = snap ? t.frame : t.current
                 entries[id] = Entry(ax: t.ax, spring: RectSpring(start), target: t.frame,
                                     config: pendingConfigOverride)
             }
-            // Suppress Enhanced UI on this app for the duration of motion.
+            // Suppress Enhanced UI on this app for the duration of motion. The AX write goes on the
+            // app's serial queue (off the main thread, before any frame write to it — same FIFO queue),
+            // so a slow app's attribute write can't stall the host main thread (perf: animate seeding).
             let pid = t.ax.pid
             if suppressedApps[pid] == nil {
                 let appEl = AXUIElementCreateApplication(pid)
-                EnhancedUI.set(false, on: appEl)
                 suppressedApps[pid] = appEl
+                queue(for: pid).async { EnhancedUI.set(false, on: appEl) }
             }
         }
 
@@ -120,6 +135,7 @@ public final class WindowAnimator: NSObject {
         entries.removeAll()
         inFlight.removeAll()
         drivenUntil.removeAll()
+        lastWritten.removeAll()
         failures = WriteFailureTracker()
     }
 
@@ -132,6 +148,7 @@ public final class WindowAnimator: NSObject {
         entries[id] = nil
         inFlight.remove(id)
         drivenUntil[id] = nil
+        lastWritten[id] = nil
         failures.forget(id)
     }
 
@@ -146,8 +163,27 @@ public final class WindowAnimator: NSObject {
         return false
     }
 
-    /// Apply targets instantly with no animation (used when animation is disabled).
-    public func snap(_ targets: [(ax: AXWindow, frame: CGRect)]) {
+    /// The app's serial write queue (created on demand). All AX writes for a pid — frame writes and
+    /// the Enhanced-UI toggles — share it, so they stay ordered and off the main thread.
+    private func queue(for pid: pid_t) -> DispatchQueue {
+        if let q = queues[pid] { return q }
+        let q = DispatchQueue(label: "com.spike.strip.ax.\(pid)")
+        queues[pid] = q
+        return q
+    }
+
+    /// Run the cross-process AX focus writes (mark main/focused, raise) OFF the main thread, on the
+    /// app's serial AX queue (the same queue as its frame writes, so the two stay ordered). This is
+    /// the ~20ms-for-Electron part that, run on main for every step of a fast slide, starves the
+    /// `.main` display-link tick and freezes the animation. The AppKit app-activation half stays on
+    /// the main thread at the call site (`AXWindow.activateApp`). See StripController.scheduleFocus.
+    public func focusAttributes(_ ax: AXWindow) {
+        queue(for: ax.pid).async { ax.focusAttributes() }
+    }
+
+    /// Apply targets instantly with no animation (used when animation is disabled). `current` (the
+    /// live seed) is unused on the snap path — windows jump straight to `frame`.
+    public func snap(_ targets: [(ax: AXWindow, frame: CGRect, current: CGRect)]) {
         for t in targets {
             EnhancedUI.suppressed(on: AXUIElementCreateApplication(t.ax.pid)) { t.ax.setFrame(t.frame) }
             if let id = t.ax.windowIDOrNil { drivenUntil[id] = CACurrentMediaTime() + graceInterval }
@@ -176,33 +212,47 @@ public final class WindowAnimator: NSObject {
 
     private func stop() {
         displayLink?.isPaused = true
-        // Restore Enhanced UI on every app we touched.
-        for (_, appEl) in suppressedApps { EnhancedUI.set(true, on: appEl) }
+        // Restore Enhanced UI on every app we touched — off-main on each app's serial queue, so it
+        // runs after that app's final frame write (FIFO) and never blocks the main thread.
+        for (pid, appEl) in suppressedApps { queue(for: pid).async { EnhancedUI.set(true, on: appEl) } }
         suppressedApps.removeAll()
         lastTimestamp = 0
     }
 
     @objc private func tick(_ link: CADisplayLink) {
+        // Per-frame budget interval. No interpolated message — the message must never allocate a
+        // String on this loop. Surfaces frames whose duration exceeds the display's refresh budget.
+        let frameState = Signpost.log.beginInterval("frame")
+        defer { Signpost.log.endInterval("frame", frameState) }
+
         let now = link.timestamp
         var dt = lastTimestamp == 0 ? (1.0 / 60.0) : (now - lastTimestamp)
         lastTimestamp = now
         dt = min(max(dt, 1.0 / 240.0), 1.0 / 30.0) // clamp against hitches
 
-        var allSettled = true
+        // `allDone` is stricter than "all springs settled": a window is only done once its *final*
+        // target frame has actually been enqueued. A settle-frame write dropped behind an in-flight
+        // one (below) keeps the loop alive so we retry, rather than leaving the window a frame short.
+        var allDone = true
         for (id, var entry) in entries {
             entry.spring.step(to: entry.target, dt: dt, entry.config ?? config)
             let settled = entry.spring.settled(near: entry.target)
             if settled {
                 entry.spring = RectSpring(entry.target) // snap exact
+                entries[id] = entry
+                // Settled and we've already delivered this exact frame — stop paying AX IPC every
+                // tick just because a sibling is still moving (perf 1.2a).
+                if lastWritten[id] == entry.target { continue }
+                if !write(id: id, frame: entry.target, ax: entry.ax) { allDone = false }
             } else {
-                allSettled = false
+                entries[id] = entry
+                allDone = false
+                _ = write(id: id, frame: entry.spring.current, ax: entry.ax)
             }
-            entries[id] = entry
-            write(id: id, frame: settled ? entry.target : entry.spring.current, ax: entry.ax)
         }
 
         emitFocusFrame()
-        if allSettled { stop() }
+        if allDone { stop() }
     }
 
     /// Re-report the focused window's current frame on demand — used when the focus ring is toggled
@@ -216,19 +266,29 @@ public final class WindowAnimator: NSObject {
     }
 
     /// Write a frame off the main thread on the app's serial queue, dropping overlapping writes.
-    private func write(id: CGWindowID, frame: CGRect, ax: AXWindow) {
-        guard !inFlight.contains(id) else { return }
+    /// Returns `true` if the write was enqueued, `false` if it was dropped (a previous write to this
+    /// window is still in flight) — the caller retries dropped settle-frames so a window never ends a
+    /// frame short of its target.
+    @discardableResult
+    private func write(id: CGWindowID, frame: CGRect, ax: AXWindow) -> Bool {
+        let sp = Signpost.log
+        // The silent backpressure drop: a write requested while the previous one is still in flight
+        // on the per-pid queue. Each emit is one occurrence — count them in Instruments to quantify
+        // how often a slow app starves its own motion. Integer interpolation only (non-allocating).
+        guard !inFlight.contains(id) else { sp.emitEvent("inFlightDrop", "id=\(id)"); return false }
         inFlight.insert(id)
+        sp.emitEvent("setFrame.enqueue", "id=\(id)")
         // Mark this window driven by us; the notification our write triggers may land a beat later,
         // so keep the grace alive `graceInterval` past now.
         drivenUntil[id] = CACurrentMediaTime() + graceInterval
-        let queue = queues[ax.pid] ?? {
-            let q = DispatchQueue(label: "com.spike.strip.ax.\(ax.pid)")
-            queues[ax.pid] = q
-            return q
-        }()
-        queue.async { [weak self] in
-            let err = ax.setFrame(frame)
+        // Pure-move frame (size unchanged since the last write) → the clamp-defeat leading setSize is
+        // a no-op, so skip it; resize frames keep the full double-set (perf 1.2b). Decide before
+        // recording this frame as the new `lastWritten`.
+        let skipInitialResize = lastWritten[id]?.size == frame.size
+        lastWritten[id] = frame
+        queue(for: ax.pid).async { [weak self] in
+            let err = ax.setFrame(frame, skipInitialResize: skipInitialResize)
+            sp.emitEvent("setFrame.done", "id=\(id) err=\(err.rawValue)")
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.inFlight.remove(id)
@@ -236,11 +296,13 @@ public final class WindowAnimator: NSObject {
                     // The element is dead — stop driving it and tell the controller to drop it.
                     self.entries[id] = nil
                     self.drivenUntil[id] = nil
+                    self.lastWritten[id] = nil
                     self.failures.forget(id)
                     self.onWindowLost?(id)
                 }
             }
         }
+        return true
     }
 }
 
