@@ -75,7 +75,9 @@ read it before any perf work.
 
 ## Architecture (the big picture)
 
-A menu-bar agent (`LSUIElement`, `.accessory`). The command flow is:
+Strip is a window manager for macOS. It runs as a background accessory app (`LSUIElement`,
+`.accessory`) — no Dock icon, no main window — so it never takes focus from the windows it manages;
+the menu bar status item is just one of its surfaces. The command flow is:
 
 ```
 HotkeyService (⌃⌥ CGEventTap)  ─┐
