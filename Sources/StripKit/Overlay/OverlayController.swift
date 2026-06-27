@@ -78,7 +78,9 @@ public final class OverlayController {
         statusHosting = NSHostingView(rootView: StatusHost(model: model))
         railPanel = Self.makePanel(level: .statusBar)
         statusPanel = Self.makePanel(level: .statusBar)
-        focusRingPanel = Self.makePanel(level: .statusBar)
+        // The ring sits at `.floating` (above managed app windows, level 0) but BELOW system UI like
+        // notification banners — at `.statusBar` it painted over notifications (BUGS.md #3).
+        focusRingPanel = Self.makePanel(level: .floating)
         railPanel.contentView = railHosting
         statusPanel.contentView = statusHosting
         // The status pill is display-only; its wide fixed panel must not eat clicks meant for windows.

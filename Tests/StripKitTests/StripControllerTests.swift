@@ -70,4 +70,32 @@ final class StripControllerTests: XCTestCase {
         XCTAssertFalse(StripController.keepsMissingWindow(
             elementAlive: true, windowServerLive: true, isMinimized: true))
     }
+
+    // MARK: - Float small new windows (isTileableSize, BUGS.md #4)
+
+    func testSmallNewWindowIsNotTileable() {
+        // A DMG-installer-sized window opens far smaller than a tile slot → leave it floating.
+        XCTAssertFalse(StripController.isTileableSize(CGSize(width: 480, height: 360), onDisplay: vis))
+    }
+
+    func testNormalNewWindowIsTileable() {
+        XCTAssertTrue(StripController.isTileableSize(CGSize(width: 1200, height: 800), onDisplay: vis))
+    }
+
+    func testNarrowWindowFloats() {
+        // Below the width fraction (even though it's tall) → floats.
+        XCTAssertFalse(StripController.isTileableSize(CGSize(width: 500, height: 1000), onDisplay: vis))
+    }
+
+    func testShortWindowFloats() {
+        // Below the height fraction (even though it's wide) → floats.
+        XCTAssertFalse(StripController.isTileableSize(CGSize(width: 1600, height: 300), onDisplay: vis))
+    }
+
+    func testWindowExactlyAtThresholdTiles() {
+        // At the fraction boundary (≈0.2w / 0.4h of vis) the `>=` test admits it.
+        let s = CGSize(width: vis.width * StripController.minTileWidthFraction,
+                       height: vis.height * StripController.minTileHeightFraction)
+        XCTAssertTrue(StripController.isTileableSize(s, onDisplay: vis))
+    }
 }

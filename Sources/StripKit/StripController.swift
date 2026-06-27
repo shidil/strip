@@ -180,7 +180,14 @@ public final class StripController {
         let known = Set(kept)
         state.ring = kept
 
-        let appeared = newOnScreen.filter { !known.contains($0.id) }
+        // Float intrinsically-small newly-appeared windows (DMG installers, palettes): tiling one
+        // would demote the focused window and reflow the strip (BUGS.md #4). Skipped windows never
+        // enter the ring, so Strip never moves them; the check is re-applied each scan, so one that
+        // later grows past the threshold is admitted automatically.
+        let vis = screen.quartzVisibleFrame
+        let appeared = newOnScreen.filter {
+            !known.contains($0.id) && Self.isTileableSize($0.frame.size, onDisplay: vis)
+        }
         if wasPopulated {
             for w in appeared { state.insertManaged(w.id, placement: state.config.newWindowPlacement) }
         } else {
@@ -242,6 +249,19 @@ public final class StripController {
             if let id = assign[s], id != removed, survivors.contains(id) { return id }
         }
         return nil
+    }
+
+    /// A newly-appeared window narrower/shorter than these fractions of the display's visible area is
+    /// treated as a transient/utility window (DMG installer, palette) and left floating instead of
+    /// tiled — tiling it would demote the focused window and reflow the strip (BUGS.md #4). Tunable.
+    static let minTileWidthFraction: CGFloat = 0.2
+    static let minTileHeightFraction: CGFloat = 0.4
+
+    /// Whether a newly-appeared window is large enough to auto-tile. Floats (returns false) when EITHER
+    /// dimension is below its fraction of the visible frame. Only gates NEW windows — an already-managed
+    /// window later resized small stays managed (ring membership is sticky). Pure → unit-testable.
+    static func isTileableSize(_ size: CGSize, onDisplay vis: CGRect) -> Bool {
+        size.width >= vis.width * minTileWidthFraction && size.height >= vis.height * minTileHeightFraction
     }
 
     // MARK: - Layout commands (menu-driven in M1)
