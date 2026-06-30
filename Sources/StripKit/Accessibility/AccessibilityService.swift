@@ -43,14 +43,20 @@ public final class AccessibilityService {
             .sorted { $0.frame.minX < $1.frame.minX }
     }
 
-    /// Every window id the *window server* currently knows about, across all apps, layers and
-    /// displays (minimized and off-Space windows included). This is a single cheap CoreGraphics call
-    /// — no AX IPC — and, unlike the flaky `kAXWindows` enumeration, it's authoritative about
-    /// liveness: a closed window's id is gone from this set. `refresh()` uses it to tell a genuinely
-    /// closed ring window (drop it) from one a busy app merely omitted from an AX scan (keep it),
-    /// so stale AX elements can't accumulate as off-screen ghosts.
-    public func liveWindowIDs() -> Set<CGWindowID> {
-        let opts: CGWindowListOption = [.optionAll, .excludeDesktopElements]
+    /// Every window id the window server currently shows **on screen**, across all apps and layers.
+    /// A single cheap CoreGraphics call — no AX IPC — and, unlike the flaky `kAXWindows` enumeration,
+    /// authoritative: closed, minimized, and hidden/ordered-out windows are all absent from this set.
+    /// `refresh()` uses it to tell a window that's still a real, usable on-strip window (a busy app
+    /// merely omitted it from one AX scan → keep it) from one that's genuinely gone from the screen
+    /// (closed, minimized to the Dock, or hidden — drop it so the strip closes up).
+    ///
+    /// Note `.optionOnScreenOnly` (not `.optionAll`): an app's off-screen helper windows and a
+    /// just-minimized/hidden window still appear in the full list, so `.optionAll` kept them holding
+    /// a slot over empty wallpaper (BUGS.md: minimize-to-Dock gap). Strip's *own* parked windows are
+    /// off-display by coordinate but still on-screen and still AX-enumerable, so they never reach the
+    /// caller that consults this set.
+    public func onScreenWindowIDs() -> Set<CGWindowID> {
+        let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let info = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else {
             return []
         }
@@ -62,6 +68,13 @@ public final class AccessibilityService {
     }
 
     /// All managed standard windows across every running regular app, on every display.
+    ///
+    /// A *hidden* app (Dock "Hide" / ⌘H) is skipped entirely: app-hide orders all its windows off
+    /// screen without flagging them minimized, yet they stay in the app's `kAXWindows` list as
+    /// normal-size windows, so they'd otherwise stay `.managed` and hold their slots over wallpaper
+    /// (BUGS.md minimize-gap, the app-Hide variant). Dropping them from enumeration sends them through
+    /// `refresh()`'s transient-miss path, where the on-screen check (a hidden window is ordered out →
+    /// not on screen) closes the gap. Un-hiding fires a reconcile that re-admits them as fresh windows.
     public func allWindows() -> [ManagedWindow] {
         let sp = Signpost.log
         let state = sp.beginInterval("allWindows")
@@ -69,7 +82,7 @@ public final class AccessibilityService {
         var scannedApps = 0
         var seen = Set<AXElementKey>()
         for app in NSWorkspace.shared.runningApplications
-        where app.activationPolicy == .regular && !app.isTerminated {
+        where app.activationPolicy == .regular && !app.isTerminated && !app.isHidden {
             scannedApps += 1
             result.append(contentsOf: windows(for: app, seen: &seen))
         }

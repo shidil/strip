@@ -45,30 +45,38 @@ final class StripControllerTests: XCTestCase {
     func testKeepsMissingWindowWhenElementAndServerAgreeLive() {
         // A transient AX-enumeration miss for a window that's still real and on-screen: keep it.
         XCTAssertTrue(StripController.keepsMissingWindow(
-            elementAlive: true, windowServerLive: true, isMinimized: false))
+            elementAlive: true, windowServerOnScreen: true, isMinimized: false))
     }
 
     func testDropsMissingWindowWhenServerNoLongerListsIt() {
         // The ghost bug: a stale AX element still answers, but the window server has dropped its id.
         XCTAssertFalse(StripController.keepsMissingWindow(
-            elementAlive: true, windowServerLive: false, isMinimized: false))
+            elementAlive: true, windowServerOnScreen: false, isMinimized: false))
     }
 
     func testDropsMissingWindowWhenElementIsDead() {
         XCTAssertFalse(StripController.keepsMissingWindow(
-            elementAlive: false, windowServerLive: true, isMinimized: false))
+            elementAlive: false, windowServerOnScreen: true, isMinimized: false))
     }
 
     func testDropsMissingWindowWhenBothSignalsDead() {
         XCTAssertFalse(StripController.keepsMissingWindow(
-            elementAlive: false, windowServerLive: false, isMinimized: false))
+            elementAlive: false, windowServerOnScreen: false, isMinimized: false))
     }
 
     func testDropsMissingWindowWhenMinimized() {
-        // The blank-slot bug: a minimized window is still alive and still listed by the window
-        // server, but it's in the Dock — it must NOT hold a slot/focus ring over empty wallpaper.
+        // The blank-slot bug: a minimized window is still alive, but it's in the Dock — it must NOT
+        // hold a slot/focus ring over empty wallpaper. (Defense-in-depth alongside the on-screen gate.)
         XCTAssertFalse(StripController.keepsMissingWindow(
-            elementAlive: true, windowServerLive: true, isMinimized: true))
+            elementAlive: true, windowServerOnScreen: true, isMinimized: true))
+    }
+
+    func testDropsMissingWindowWhenClosedToDock() {
+        // The minimize/hide gap (BUGS.md, Slack): an app closes its window to the Dock — the element
+        // is still alive and NOT flagged minimized, but the window has left the screen (off the
+        // on-screen window list). It must be dropped so the strip closes the gap.
+        XCTAssertFalse(StripController.keepsMissingWindow(
+            elementAlive: true, windowServerOnScreen: false, isMinimized: false))
     }
 
     // MARK: - Float small new windows (isTileableSize, BUGS.md #4)
