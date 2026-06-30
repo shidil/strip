@@ -1,20 +1,28 @@
-# Strip — niri-style "film-strip" window manager for macOS (spike)
+# Strip — niri-style "film-strip" window manager for macOS
 
-> **Resume doc.** This file is the durable source of truth for the project plan and milestone
-> progress, so work can continue in a fresh session without the original chat history. For the
-> immediate next step, also read **HANDOFF.md**. Engram memory: `mem_search "strip-wm-spike"`.
+> **Source of truth.** This file is the durable record of the roadmap, milestone status, and the
+> hard-won architecture/gotchas, so work can continue in a fresh session without the original chat
+> history. **`HANDOFF.md` is the active-task doc** — a per-task brief for an agent, replaced each time
+> a new task is handed over; it is *not* a roadmap. Engram memory: `mem_search "strip-wm-spike"`.
 
 ## Goal
 
 Build the **real** macOS window manager (not a web port) that implements the **Strip** concept from
 the Claude Design prototype in `wm-prototype/macos-window-manager-prototype/`: windows live on a
 horizontal *film*, the focused window stays centered, neighbors flow past it ("the center slot never
-moves"). This is a **spike to prove the strip concept feels good** — quality of motion/feel over
-completeness.
+moves"). It began as a **spike to prove the strip concept feels good** (M0–M5, done) and is now being
+turned into a **daily driver** (M6+).
 
 The prototype HTML (`project/Strip Window Manager.dc.html` + `StripWindow.dc.html`) is the **design
 spec**, not code to port literally. Its `geom()`/`resolve()`/`computeVM()` logic *was* ported (as the
 layout engine); its visuals guide the M4 overlay chrome.
+
+## North star
+
+Strip runs all day and you forget it's there. Windows auto-arrange as you open/close them and
+launch/quit apps; junk windows (dialogs, palettes, panels) stay out of the strip; nothing ever gets
+stranded off-screen; it survives quit/crash/restart. Target setup: a **single ultrawide** (BenQ
+EX3415R, 3440×1440). Multi-display and macOS Spaces are deliberately **deferred** (see *Deferred*).
 
 ## Decisions (locked)
 
@@ -91,6 +99,23 @@ Tests/StripKitTests/
                                    (1440x900 == prototype pixels), ultrawide scaling, parking
 ```
 
+### Verified seams (where new work hooks in)
+
+- `StripController.refresh()` / `refreshAndApply()` — idempotent, sticky-membership (a window stays
+  managed while it *exists*, even parked; the on-display test only gates *new* windows; orphans off
+  every display are reclaimed). Built to be driven by an event source (see `WindowObserver`).
+- `WindowObserver.swift` — per-app `AXObserver` + `NSWorkspace` notifications → one **75 ms
+  trailing-edge debounced** `refreshAndApply()`. Deliberately does **not** observe move/resize as a
+  reconcile trigger; user drags are handled via a global mouse bracket (M7). Notification list is
+  `Self.notifications`.
+- `AccessibilityService.classify()` → `managed | floating | ignored` (replaced `isManageable`). This
+  is where window-classification rules grow (per-app denylist is still TODO → M9).
+- `WindowAnimator` — the **only** thing that writes window frames; parks off-strip windows fully off
+  the display edge. Exposes an `isDriving`/`drivenUntil` handshake so the observer can tell the
+  animator's own `AXMoved`/`AXResized` from a real user drag.
+- `AppDelegate.start()` — wires `HotkeyService` → `StripController`, sets up/tears down the observer,
+  and un-parks all windows on `applicationWillTerminate`.
+
 ## Commands
 
 **Build/dev loop**
@@ -111,10 +136,11 @@ make run             # bundle + run inner binary (NOT trusted from shell; build-
 | ⌃⌥E | focus ↔ equal emphasis | ✅ |
 | ⌃⌥T | cycle spring feel (Track/Pop/Glide) | ✅ |
 | ⌃⌥P | pin/unpin focused slot | ✅ |
-| ⌃⌥Space | overview | ⬜ M5 |
+| ⌃⌥Space | overview (real thumbnails) | ✅ |
+| ⌃⌥0 | release-all / toggle-suspend (escape hatch) | ✅ |
 | ⌃⌥/ | help overlay (keyboard cheatsheet) | ✅ |
 
-Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Quit.
+Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Overview, Release-all, Quit.
 
 ## Critical gotchas (do not relearn)
 
@@ -224,6 +250,76 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, Q
       - [x] **Spring polish.** Presets kept as-is — user feedback already confirmed **Track and Pop
         feel best**, and the cycle order `[track, pop, glide]` puts those two first with **Glide last
         (optional)**. ⌃⌥T cycling updates the status pill's transition label. No retune warranted.
+
+> **M0–M5 = the spike, done and user-confirmed.** From here Strip becomes a daily driver.
+
+- [x] **M6 — Live & well-behaved (event-driven core).** ✅ DONE 2026-06-24, verified live. The
+      headline gap: Strip was *manual* (re-tiled only on command). Two halves shipped together
+      (auto-react without classification is a regression — every dialog gets tiled):
+      - `Accessibility/WindowObserver.swift` — per-app `AXObserver` (create/destroy/min/deminiaturize/
+        focused/main) + `NSWorkspace` launch/terminate/activate/hide → one **75 ms trailing-edge
+        debounced** `refreshAndApply()`. Re-attaches on activation (covers launch-time AX-not-ready).
+        Deliberately does **not** observe move/resize (would feed the animator's own writes back into a
+        reconcile storm — user drags are M7).
+      - `AccessibilityService.classify()` → `managed | floating | ignored` (replaced `isManageable`):
+        floats non-standard subroles (dialogs/sheets/panels/palettes) and **non-resizable** windows
+        (`AXWindow.isResizable` probes `AXUIElementIsAttributeSettable(kAXSize)`); ignores wrong
+        role / minimized / sub-80px. Only `.managed` is tiled. Per-app denylist deferred → M9.
+      - **New-window placement** (`StripState.insertManaged`, pure + tested): default `.focusCenter`
+        inserts a new window into the film **right after the focused window** (niri-style) and focuses
+        it; previous focus flows to the slot on its left. `.append` tucks it at the film's end.
+        `LayoutConfig.newWindowPlacement` (persisted, tolerant decoder). Applies only to windows that
+        appear *while running*; initial population lays out in on-screen order.
+      - **Closing the centered window** hands center to the flanking window — left slot first, then
+        right (`StripController.neighborOfClosedCenter`, pure + tested); falls back to `ring.first`.
+- [x] **M7 — Resilience & escape hatch.** ✅ DONE 2026-06-24, verified live. Auto-react means Strip is
+      always touching windows, so failure modes matter. Four independently-shippable slices:
+      - **Release-all** (⌃⌥0) — toggle-suspend escape hatch: un-parks every off-screen window to a
+        centered/cascaded on-screen frame, then suspends management (refresh/apply no-op) so windows
+        stay put. ⌃⌥0 again — or any explicit layout/nav command — resumes and re-tiles.
+        `StripController.releaseAll`/`resume`/`unparkStranded`; `unparkFrame` pure + tested.
+      - **Un-park-on-quit** — `applicationWillTerminate` stops the observer then synchronously
+        (`unparkAllOnScreen`, no animator — the display link won't tick during termination) writes
+        every parked window back on-screen, so quitting never strands a window.
+      - **AX-drop recovery** — `AXWindow.setFrame` surfaces `AXError`; `WriteFailureTracker` (pure +
+        tested) counts per-window consecutive failures and, after a hard `.invalidUIElement` or N soft
+        failures, fires `onWindowLost` → the controller drops the dead window instead of wedging the
+        animator on a stale element (app crash/relaunch).
+      - **Respect user drags** (the crux) — a **global left-button bracket** (`WindowObserver`)
+        suspends management while the mouse is held and flushes on release. A user **move** of a tiled
+        window snaps it back; a **resize of the dominant window** is *kept* by inverting its frame into
+        the sizing knobs (`DragResolver`, pure + tested: width → `focusRatio`/`monocleWidthFraction`,
+        height → `heightFraction`); non-dominant resizes snap back. The animator distinguishes its
+        **own** writes from user drags via the `isDriving`/`drivenUntil` handshake, re-seats a dragged
+        window from its live frame (`forget`), and returns it with a one-shot `SnapBack` spring.
+        Size-quantizing apps (terminals — `SteppingApps`, pure + tested) snap rather than spring.
+      - **Known residual (not a Strip defect):** heavyweight apps (e.g. cmux) beachball/step while
+        *you* drag their native resize handle — their own AX-resize slowness. Per-app handling → M9.
+- [ ] **M8 — Workspaces (multiple strips).** ← **NEXT.** The niri model is *several* strips — the real
+      organizing tool on one big display.
+      - N independent `StripState`s; switch with a hotkey; carry-focused-window-to-workspace.
+      - Inactive workspaces' windows parked off-screen (parking mechanism already exists).
+      - Per-workspace center / pins / layout.
+      - Likely a `WorkspaceManager` owning N states, or a workspace dimension on `StripController`.
+      - **Open question:** ⌃⌥1–3 are layout switches today; pick a non-conflicting binding
+        (⌃⌥←/→? ⌃⌥⇧1–9?).
+- [ ] **M9 — Lives in the system.**
+      - **Launch at login** — `SMAppService.mainApp`; menu toggle.
+      - **Config file** — `~/.config/strip/` (TOML/JSON): hotkeys (today hardcoded in `HotkeyService`),
+        spring presets, ignore denylist, default layout, workspace count.
+      - **Settings persistence** — remember cols/emphasis/spring/layout across restart. (Persist
+        *settings*, not exact window placement — `CGWindowID` isn't stable across restart.)
+
+## Deferred (revisit only if the setup changes)
+
+- **Multi-display** — per-display strips, window-follows-active-display. Parked because: single ultrawide.
+- **macOS Spaces + fullscreen apps** — windows on other Spaces aren't AX-enumerable without focusing
+  them; large effort, low value for the current single-Space-per-display workflow.
+
+## Open bugs
+
+See `BUGS.md`. Current: (1) quit→reopen rearranges window order (should preserve, like Re-tile);
+(2) minimize-on-close (e.g. Slack) leaves a gap — layout should backfill the freed slot.
 
 ## Prototype reference & feel notes (for M4/M5)
 

@@ -1,198 +1,66 @@
-# HANDOFF — Strip: spike → daily driver
+# HANDOFF — active task brief
 
-> The spike (M0–M5) is **done and user-confirmed**: the film-strip *feel* is proven — smooth AX-only
-> motion, pinning, layouts, overlay chrome, overview with real thumbnails, keyboard nav. See `PLAN.md`
-> for that history. This doc is the **forward roadmap**: what turns the proven spike into something
-> the author uses all day on a single ultrawide.
-
-## North star
-
-Strip runs all day and you forget it's there. Windows auto-arrange as you open/close them and launch/
-quit apps; junk windows (dialogs, palettes, panels) stay out of the strip; nothing ever gets stranded
-off-screen; it survives quit/crash/restart.
-
-## Priorities (set 2026-06-24)
-
-- **P0 — Auto-react.** The headline gap. Today Strip is *manual*: it only re-tiles when you ask. There
-  are **no AX observers and no `NSWorkspace` launch/quit notifications** — the lone `Timer` is the
-  permission gate (`AppDelegate.pollForTrust`). This is the single thing between "neat demo" and
-  "forget it's running."
-- **Single ultrawide** (BenQ EX3415R, 3440×1440). → **Multi-display and macOS Spaces are DEFERRED.**
-- **Floating/ignore rules** — not optional: they are the required companion to auto-react.
-
-## Where the work hooks in (verified seams)
-
-- `StripController.refresh()` / `refreshAndApply()` — already idempotent, sticky-membership (a window
-  stays managed while it *exists*, even parked; on-display test only gates *new* windows; orphans off
-  every display are reclaimed). **Built to be driven by an event source.** Just needs calling on the
-  right events instead of by hand.
-- `AccessibilityService.allWindows()` — per-app AX enumeration. Its header comment (line ~5) already
-  earmarks "live focus/create/destroy observation arrives in a later milestone."
-- `AccessibilityService.isManageable()` — today minimal (role/subrole/min-size 80×80). This is where
-  classification grows.
-- `WindowAnimator` parks off-strip windows fully off the display edge — so a crash/quit *strands* them
-  until the next launch's orphan-reclaim. M7 addresses this.
+> **This doc is the brief for one task handed to an agent. It is replaced wholesale each time a new
+> task starts — it is NOT the roadmap or status record.** For roadmap, milestone status, architecture,
+> the verified-seam map, and the do-not-relearn gotchas, read **`PLAN.md`** (the source of truth).
+> Engram memory: `mem_context` for project `wm`, or `mem_search "strip-wm-spike"`.
+>
+> Fill the `<…>` placeholders below for the current task; delete this quote block when you do.
 
 ---
 
-## Milestones
+## Task
 
-### M6 — Live & well-behaved (event-driven core)  ✅ DONE (2026-06-24)
+<One line: what to build/fix. e.g. "M8 — workspaces (multiple strips)" or "Bug: minimize-on-close
+leaves a gap in the layout (Slack).">
 
-The headline. Two halves that **must ship together** (auto-react without classification is a
-regression — every dialog/palette gets tiled). **Both shipped; verified live** — windows re-tile on
-open/close and app launch/quit with no hotkey, debounced into one reconcile, no flicker storm.
+## Why / outcome
 
-**What shipped:**
-- `Accessibility/WindowObserver.swift` — per-app `AXObserver` (create/destroy/min/deminiaturize/
-  focused/main) + `NSWorkspace` launch/terminate/activate/hide → one **75 ms trailing-edge debounced**
-  `controller.refreshAndApply()`. Re-attaches on activation (covers launch-time AX-not-ready). Wired
-  in `AppDelegate.start()`. **Deliberately does NOT observe move/resize** — that would feed the
-  animator's own writes back into a reconcile storm; honoring user drags is M7.
-- `AccessibilityService.classify()` → `managed | floating | ignored` (replaces `isManageable`).
-  Conservative: floats non-standard subroles (dialogs/sheets/panels/palettes) and **non-resizable**
-  windows (`AXWindow.isResizable` probes `AXUIElementIsAttributeSettable(kAXSize)`); ignores wrong
-  role / minimized / sub-80px. Only `.managed` is tiled. No per-app denylist yet → M9.
-- **New-window placement** (`StripState.insertManaged`, pure + tested): default `.focusCenter` slides
-  a new window into the preferred *unpinned* slot (center→right→left) and focuses it; `.append` tucks
-  it at the film's end. Customizable via `LayoutConfig.newWindowPlacement` (persisted; tolerant
-  decoder so the new knob doesn't wipe old saved settings). `refresh()` only applies the policy to
-  windows that appear *while running* — initial population lays out in on-screen order.
-  In the center-free case the new window is inserted into the film **right after the currently-
-  focused window** (niri-style) so it opens next to your context and the film stays contiguous,
-  rather than landing at the far end of the ring; the previous focus flows into the slot to its left.
-  (Ring reorder shared via `StripState.reorderedRing`, which preserves pin slots.)
+<What the user gets when this is done, and why it matters. 1–3 sentences.>
 
-- **Closing the centered window** hands the center to the window that flanked it — left slot first,
-  then right (`StripController.neighborOfClosedCenter`, pure + tested) — so closing the focused
-  window returns you to your previous context instead of snapping to the start of the film. Falls
-  back to `ring.first` only when no flank survives.
+## Acceptance
 
-#### Original plan (kept for reference)
+<Concrete, checkable conditions. e.g.:>
+- `make test` stays green; new pure logic is unit-tested headlessly.
+- <observable live behavior, verified via `make open` + `/tmp/strip.log` and/or the author's eyes>
 
-**6a — Event sources → one debounced reconcile**
-- New `Accessibility/WindowObserver.swift`: owns a per-app `AXObserver` + run-loop source. Subscribe to:
-  - `kAXWindowCreatedNotification`, `kAXUIElementDestroyedNotification`
-  - `kAXWindowMiniaturizedNotification` / `kAXWindowDeminiaturizedNotification`
-  - `kAXFocusedWindowChangedNotification`, `kAXMainWindowChangedNotification`
-  - (later) `kAXMovedNotification` / `kAXResizedNotification` for user drags — see M7
-- `NSWorkspace.shared.notificationCenter`: `didLaunchApplication`, `didTerminateApplication`,
-  `didActivateApplication`, `didHide/didUnhideApplication`. On launch → attach a fresh AXObserver to
-  the new app's element; on terminate → tear it down.
-- **Coalesce**: notifications fire in bursts (opening one app emits several). Debounce ~50–100 ms onto
-  a single serial reconcile that calls `controller.refreshAndApply()`. Never reconcile per-event.
-- Wire setup/teardown in `AppDelegate.start()`.
+## Scope / seams to touch
 
-**6b — Window classification / ignore rules**
-- Grow `isManageable` into a classifier returning `managed | floating | ignored`:
-  - **ignored** (never touch): non-resizable windows (probe `AXUIElementIsAttributeSettable` for
-    `kAXSizeAttribute`), `AXSheet`/dialog-ish subroles, popovers, sub-min-size, per-app denylist
-    (media players, 1Password mini, system utilities, etc.).
-  - **floating** (track but leave in place, so reconcile doesn't yank them).
-  - **managed** (into the strip).
-- Denylist keyed by bundle id; sourced from config in M9 (hardcode a sensible default set first).
+<The specific files/methods this task hooks into. Cross-reference PLAN.md's "Verified seams" map.
+Name the seam, not just the file. e.g.:>
+- `StripController` — owns the ring + `refreshAndApply()`; <what changes here>.
+- `<file>` — <what changes here>.
 
-**Acceptance:** open/close windows + launch/quit apps with no manual re-tile and no flicker storms;
-dialogs/palettes/non-resizable windows are left alone.
+## Constraints / watch-outs
 
-### M7 — Resilience & escape hatch (won't strand you)  ✅ DONE (2026-06-24)
-
-Auto-react means Strip is always touching your windows, so failure modes now matter. All four
-slices shipped and verified live; the film-strip now survives drags, quits, crashes, and panic.
-
-**What shipped (slice by slice):**
-- **Release-all** (⌃⌥0) — toggle-suspend escape hatch: un-parks every off-screen window to a
-  centered/cascaded on-screen frame, then suspends management (refresh/apply no-op, auto-react
-  ignored) so windows stay put. ⌃⌥0 again — or any explicit layout/nav command — resumes and
-  re-tiles. `StripController.releaseAll`/`resume`/`unparkStranded`; `unparkFrame` is pure + tested.
-- **Un-park-on-quit** — `applicationWillTerminate` stops the observer then synchronously
-  (`unparkAllOnScreen`, no animator — the display link won't tick during termination) writes every
-  parked window back on-screen, so quitting never strands a window off the edge.
-- **AX-drop recovery** — `AXWindow.setFrame` surfaces `AXError`; `WriteFailureTracker` (pure +
-  tested) counts per-window consecutive failures and, after a hard `.invalidUIElement` or N soft
-  failures, fires `onWindowLost` → the controller drops the dead window from the ring instead of
-  wedging the animator on a stale element (app crash/relaunch).
-- **Respect user drags** — the crux. A **global left-button bracket** (`WindowObserver`) suspends
-  all management while the mouse is held (so the grab's focus change can't reconcile the held window
-  back mid-drag) and flushes the gesture on release. A user **move** of any tiled window snaps it
-  back to its slot; a **resize of the dominant window** is *kept* by inverting its frame into the
-  sizing knobs (`DragResolver`, pure + tested: width → `focusRatio`/`monocleWidthFraction`, height →
-  `heightFraction`); non-dominant resizes snap back. The animator distinguishes its **own** frame
-  writes from user drags via a settle+grace handshake (`isDriving`/`drivenUntil`), re-seats a dragged
-  window from its live frame (`forget`) so it glides from where you let go, and returns it with a
-  crisp one-shot `SnapBack` spring. Size-quantizing apps (terminals — `SteppingApps`, pure + tested)
-  snap rather than spring to avoid a per-frame re-quantization staircase.
-
-**Known residual (not a Strip defect):** heavyweight apps (e.g. cmux) beachball/step while *you*
-drag their native resize handle — their own AX-resize slowness, before Strip is involved. Per-app
-handling (disable management / force-snap) belongs to M9's config.
-
-#### Start-here checklist (kept for reference)
-
-1. **Orient (5 min):** read this M7 section + `CLAUDE.md`; run `mem_context` for project `wm` to
-   recover the M6 design and gotchas. Then **plan before coding** (the author reviews plans first).
-2. **Trust the build, not the editor:** `swift test` and `make bundle` are authoritative — the
-   post-edit SourceKit "cannot find X" diagnostics in this repo are stale/false; don't chase them.
-   Run live with `make open` (a shell-run binary isn't AX-trusted); observe with `cat /tmp/strip.log`.
-   Live behavior needs the author's screen — a headless agent's startup reconcile finds no windows.
-3. **The crux is the move/resize feedback loop** (see *Respect user drags* below). Do this design
-   first; the other three items are smaller and independent.
-4. **Seams to touch:**
-   - `WindowObserver.swift` — currently does **not** subscribe to `kAXMovedNotification` /
-     `kAXResizedNotification` (deliberately, to avoid storming on the animator's own writes). Adding
-     them is where *respect-user-drags* starts. The notification list is `Self.notifications`.
-   - `WindowAnimator` — the **only** thing that writes window frames. It must expose "I am currently
-     moving window X" so the observer can tell animator-initiated `AXMoved`/`AXResized` from a user
-     drag. Without this guard, observing move/resize is a reconcile storm (the M6 reason it was left
-     out). Likely a per-window "settling until" timestamp or an in-flight id set the observer checks.
-   - `StripController` — owns the ring + `refreshAndApply()`. Release-all and AX-drop recovery hook
-     here; `apply()` is where AX-write failures surface.
-   - `AppDelegate` — wire the release-all hotkey/menu and `applicationWillTerminate` un-park.
-   - `HotkeyService` — add the release-all chord (⌃⌥0; `kVK_ANSI_0`), mirroring the existing sizing
-     keys' wiring (enum case → chord switch → `AppDelegate.handle`).
-5. **Suggested slice order** (each is shippable + testable on its own): release-all → un-park-on-quit
-   → AX-drop recovery → respect-user-drags (last; it's the hardest and benefits from the others).
-6. **Acceptance:** drag/resize a tiled window by hand and Strip either re-absorbs it cleanly or
-   leaves it floating — it does **not** fight you or storm; quitting Strip leaves every window
-   on-screen; a crashed/relaunched app's stale windows drop out instead of wedging the animator;
-   ⌃⌥0 releases everything to sane on-screen frames.
-
-#### Work items (all ✅ — see "What shipped" above for detail)
-
-- ✅ **Release-all** (⌃⌥0 + menu): toggle-suspend; un-park to sensible on-screen frames.
-- ✅ **Quit/crash safety**: `applicationWillTerminate` un-parks all parked windows back on-screen.
-- ✅ **AX-drop recovery**: failing AX writes drop the dead window instead of wedging the animator.
-- ✅ **Respect user drags**: mouse-bracketed; move → snap back, dominant resize → keep via knobs.
-
-### M8 — Workspaces (multiple strips)  ← NEXT
-
-The niri model is *several* strips — the real organizing tool on one big display.
-- N independent `StripState`s; switch with a hotkey; carry-focused-window-to-workspace.
-- Inactive workspaces' windows parked off-screen (parking mechanism already exists).
-- Per-workspace center / pins / layout.
-- Likely a `WorkspaceManager` owning N states, or a workspace dimension on `StripController`.
-- **Open question:** ⌃⌥1–3 are layout switches today; pick a non-conflicting binding (⌃⌥←/→? ⌃⌥⇧1–9?).
-
-### M9 — Lives in the system
-
-- **Launch at login** — `SMAppService.mainApp`; menu toggle.
-- **Config file** — `~/.config/strip/` (TOML/JSON): hotkeys (today hardcoded in `HotkeyService`),
-  spring presets, ignore denylist, default layout, workspace count.
-- **Settings persistence** — remember cols/emphasis/spring/layout across restart. (Persist *settings*,
-  not exact window placement — `CGWindowID` isn't stable across restart.)
+<Task-specific traps. Pull the relevant ones from PLAN.md "Critical gotchas" and CLAUDE.md, e.g.:>
+- Keep pure layout/state logic in `Layout/` + `Model/` so it stays headless-testable.
+- Coordinates are **Quartz global** internally; convert to Cocoa only at the AppKit boundary.
+- Perf-sensitive paths (`Animation/`, AX enumeration/reconcile) need a MEASURE-FIRST justification
+  (`MEASURING.md`) — and will be checked by the `measurement-enforcer` agent.
+- AX/coordinate/animation/identity edits will be checked by the `ax-invariant-reviewer` agent.
 
 ---
 
-## Deferred (revisit only if the setup changes)
+## How to work in this repo (task-agnostic — keep)
 
-- **Multi-display** — per-display strips, window-follows-active-display. Parked because: single ultrawide.
-- **macOS Spaces + fullscreen apps** — windows on other Spaces aren't AX-enumerable without focusing
-  them; large effort, low value for the current single-Space-per-display workflow.
+1. **Orient first.** Read this brief + the relevant `PLAN.md` milestone + `CLAUDE.md`; run
+   `mem_context` for project `wm` to recover prior design decisions and gotchas. **Plan before
+   coding — the author reviews plans first.**
+2. **Trust the build, not the editor.** `swift test` and `make bundle` are authoritative; the
+   post-edit SourceKit "cannot find X" diagnostics in this repo are stale/false — don't chase them.
+3. **Run live only via `make open`.** A shell-run binary isn't Accessibility-trusted (TCC attributes
+   it to the parent shell). `open`-launched agents have no stdout — observe via `cat /tmp/strip.log`.
+   Live behavior needs the **author's screen**: a headless agent's startup reconcile finds no windows.
+4. **Slice the work.** Prefer independently shippable + testable slices; land pure logic + its tests
+   first, wire the AppKit/AX side after.
+5. **Close the loop.** Update `PLAN.md` milestone status and `BUGS.md`, `mem_save` the outcome
+   (decision/bug-fix/discovery), and for perf work record the before→after + workload.
 
-## Verification (unchanged from spike)
+## Verification
 
 - `make test` — engine correctness, no GUI.
-- `make open`, then `cat /tmp/strip.log`; open 5–6 windows on the active display. (Trust requires the
-  LaunchServices launch; logs go to `/tmp/strip.log`. See `PLAN.md` gotchas.)
-- For M6: open/close windows and launch/quit apps **without touching a hotkey** and watch the log
-  reconcile.
+- `make open`, then `cat /tmp/strip.log`; open 5–6 windows on the active display.
+- Exercise the task's behavior by hand; for visual changes, verify with eyes (`screencapture`),
+  captured *across* a state change so a stale render can't pass.
+- Sanity: no SIP, no scripting addition; runs with only the Accessibility (+ Screen Recording) grant.

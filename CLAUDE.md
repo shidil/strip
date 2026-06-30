@@ -8,9 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 concept: windows live on a horizontal film, the focused window stays centered, neighbors flow past
 it. It is **Swift + AppKit, Accessibility-API only, no SIP, no scripting addition**.
 
-**`PLAN.md` and `HANDOFF.md` are the authoritative project docs** — full plan, milestone progress
-(M0–M2 done; M3 pinning is next), architecture rationale, and the next-step guide. Read them before
-substantive work. Engram has deeper context: `mem_search "strip-wm-spike"`.
+**`PLAN.md` is the authoritative project doc** — the source of truth for roadmap, milestone progress
+(M0–M7 done & user-confirmed; M8 workspaces is next), architecture rationale, the verified-seam map,
+and the do-not-relearn gotchas. **`HANDOFF.md` is the active-task brief** — a per-task handoff for an
+agent, replaced wholesale each time a new task starts (not a roadmap). Read both before substantive
+work. Engram has deeper context: `mem_search "strip-wm-spike"`.
 
 The `wm-prototype/` directory is the **design spec** (an exported HTML/CSS/JS mockup), not code to
 port. Its `geom()`/`resolve()`/`computeVM()` logic was ported into the Swift layout engine; its
