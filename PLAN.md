@@ -309,6 +309,46 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, O
         spring presets, ignore denylist, default layout, workspace count.
       - **Settings persistence** — remember cols/emphasis/spring/layout across restart. (Persist
         *settings*, not exact window placement — `CGWindowID` isn't stable across restart.)
+- [ ] **M10 — 2-D film (vertical columns).** Each horizontal slot becomes a niri-style *column* — a
+      vertical sub-strip of windows you slide on the **y-axis** — with both axes live at the same time
+      in **one** workspace. (Distinct from M8: switching M8 workspaces changes *everything*; here the
+      x-strip stays and you slide windows up/down within a slot.) Turns the 1-D ring into a 2-D grid.
+      - Pure model: `StripState` ring → 2-D (each slot holds a column of windows).
+      - Layout: `SlotGeometry` gains per-column **y-distribution** (it distributes width across X only today).
+      - Nav: add vertical keys (up/down within a column) alongside J/K.
+      - Minimap: render columns, not a flat row.
+      - Feasible on AX-only (still just move/resize of our own windows); **L** effort.
+
+## Backlog — triaged ideas (from `IDEAS.md`, triaged 2026-06-30)
+
+All feasible on the AX-only platform (none need 3-D / per-window opacity / dragging real windows — they
+act on Strip's own overlay or its ring model, or reuse the M5 ScreenCaptureKit capture). Effort: S/M/L.
+The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns → **M10** above;
+"swap to center/right slot" → swap-with-neighbor (below). Raw wording is preserved in `IDEAS.md`.
+
+**Minimap (film rail) polish** — the rail panel is already interactive (`.statusBar`, `onTapGesture`):
+- **App icons instead of letter chip** (S) — `RailChip`/`RailItem`; `NSRunningApplication.icon`.
+- **Window previews on hover or hotkey** (M) — reuse `ThumbnailStore`/`WindowThumbnailer`; throttle on
+  hover. Caveat: parked/minimized windows can't capture → placeholder (known M5 limit).
+- **Reposition the minimap** (S–M) — rail panel frame is computed in `OverlayController`; make the edge
+  configurable (persist via M9 config).
+- **Overview-trigger button in the minimap** (S) — rail takes clicks → `OverlayController.toggleOverview()`.
+
+**Mouse / Dock interaction:**
+- **Follow OS/Dock focus → re-center** (M) — `WindowObserver` already receives `kAXFocusedWindowChanged`
+  / `kAXMainWindowChanged` / `didActivateApplication` (today they feed a reconcile, not a re-center);
+  re-center the focused ring window. Watch-outs: Strip's own focus change must not re-trigger
+  (self-suppression already exists), and ⌘-Tab churn could slide the strip on every app-switch.
+- **Drag-rearrange windows in the minimap** (L) — rail drag → ring permutation in `StripState` → re-tile.
+  Heaviest minimap interaction; only reorders our model, no AX drag of real windows.
+- **Modifier-click swap in the minimap** (S–M) — rail click + modifier → swap ring positions (shares the
+  swap primitive with swap-with-neighbor below).
+
+**Navigation / commands:**
+- **Window search (overview / spotlight style)** (M) — filter `RailItem.title`/`appName` → `setCenter(id)`;
+  a search field inside overview or its own panel.
+- **Swap focused ↔ neighbor** (S) — ring-swap command, focus rides the moved window, to the center/right
+  neighbor. Pure `StripState`/`StripLayout` op.
 
 ## Deferred (revisit only if the setup changes)
 
@@ -318,8 +358,9 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, O
 
 ## Open bugs
 
-See `BUGS.md`. Current: (1) quit→reopen rearranges window order (should preserve, like Re-tile);
-(2) minimize-on-close (e.g. Slack) leaves a gap — layout should backfill the freed slot.
+See `BUGS.md`. Current: (1) quit→reopen rearranges window order (should preserve, like Re-tile).
+(Fixed 2026-06-30: minimize/hide-on-close gap — reconcile now drops windows the window server no
+longer shows on screen, so the strip closes up.)
 
 ## Prototype reference & feel notes (for M4/M5)
 
