@@ -5,7 +5,7 @@ BIN    := $(APP)/Contents/MacOS/$(APP_NAME)
 BUNDLE_ID := com.spike.strip
 SIGN_ID   ?= Strip Dev
 
-.PHONY: build bundle run open profile test clean setup-signing
+.PHONY: build bundle run open profile test e2e clean setup-signing
 
 ## Compile the Swift package.
 build:
@@ -68,6 +68,14 @@ profile: open
 ## Unit tests for the pure layout engine.
 test:
 	swift test
+
+## AppKit/AX/menu integration smoke suite — drives a real bundled+launched Strip via hotkeys and
+## status-menu clicks, asserting against /tmp/strip-e2e.log. NOT part of `test`/the PostToolUse
+## hook: needs a granted Accessibility permission, a real display, and no other automation touching
+## the mouse/keyboard while it runs. Kills any running Strip and needs a clean desktop (only its own
+## fixture windows) — see TESTING.md.
+e2e: bundle
+	@bash scripts/e2e/run.sh
 
 clean:
 	swift package clean

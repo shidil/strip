@@ -1,0 +1,140 @@
+Build a repeatable smoke-test / e2e test suite for Strip (the macOS window manager in this repo),
+replacing the ad-hoc osascript+screenshot flow that's currently being re-invented by hand each
+session. Follow a strict research → plan → implement flow: do NOT write test code until a plan has
+been reviewed. This is consistent with the repo's own convention (see HANDOFF.md: "Plan before
+coding — the author reviews plans first").
+
+## Context: why this is needed
+
+`swift test` already covers the pure logic (`StripState`/`StripLayout`/etc.) headlessly — that part
+is solid and not what's missing. What's missing is a repeatable way to verify the AppKit/AX/SwiftUI
+integration layer: does a hotkey actually reach `StripController`, does a menu item actually flip a
+setting, does the rail actually render where the code says it should. Today that verification is
+manual: bundle, launch, click through things with osascript, screenshot, eyeball it, throw the
+script away. Re-derive the same osascript incantations and log-reading habits every session.
+
+## What was learned in the session that motivated this (verify, don't just trust)
+
+These are empirical findings from one exploratory session driving Strip via scripted input. Confirm
+they still hold (things drift), then build on them rather than rediscovering them:
+
+- **Menu-driven flows are reliable to automate.** Strip is an `LSUIElement` accessory app — its
+  status-bar menu lives under `menu bar 1` of the process in System Events' accessibility tree, NOT
+  `menu bar 2` (which is where a normal app's own app-menu would be). Pattern that worked:
+  ```
+  osascript -e '
+  tell application "System Events"
+    tell process "Strip"
+      click menu bar item 1 of menu bar 1
+      delay 0.3
+      click menu item "Minimap position" of menu 1 of menu bar item 1 of menu bar 1
+      delay 0.3
+      click menu item "Top" of menu 1 of menu item "Minimap position" of menu 1 of menu bar item 1 of menu bar 1
+    end tell
+  end tell'
+  ```
+  Enumerate available items first with `name of every menu item of menu 1 of ...` rather than
+  guessing titles.
+- **`/tmp/strip.log` (launched with `open --env STRIP_VERBOSE=1 .build/Strip.app`) is the right
+  assertion oracle** — not screenshots. It's structured, one block per `apply()`:
+  ```
+  13:29:43.148 restored settings: 3-up, focusRatio 0.47, height 0.96, ring on, rail bottom
+  13:29:43.287 apply: 3-up · focus on G34WQC A — 3 slotted, 2 parked
+  13:29:43.287    ● Ghostty slot=C frame=(912,39 1615x1362) ◀focus
+  13:29:43.287    · Slack slot=R frame=(2536,39 896x1362)
+  13:29:43.287    · WezTerm slot=PARKED frame=(3480,39 896x1362)
+  ```
+  Grep/parse this instead of pixel-diffing a screenshot wherever possible.
+- **Synthetic mouse hover is NOT reliable to automate as-is.** Posting `CGEvent` `.mouseMoved`
+  (single-shot or stepped/smoothed, tried both `.cghidEventTap` and `.cgSessionEventTap`) to trigger
+  SwiftUI's `.onHover` on the film rail fired maybe once across many attempts — not usable for
+  assertions. Real NSMenuItem clicks via accessibility scripting work fine; raw hover/move over
+  custom SwiftUI window content inside a borderless/non-activating panel does not deliver reliably
+  through that path in this environment. **Do not re-attempt more exotic `CGEvent` variations as the
+  first move** — the research phase below should spend a *time-boxed* spike on whether XCUITest's
+  event injection (a different, more privileged path than raw `CGEvent` posting) handles this better,
+  and if that also fails inside the time-box, explicitly scope hover/drag-style mouse interactions out
+  of v1 as "manual-only, documented" rather than burning further cycles chasing it.
+- Synthetic **keyboard** hotkeys ARE reliable: `osascript -e 'tell application "System Events" to key
+  code N using {control down, option down}'` (and `, shift down` for the carry commands). Key codes
+  are in `Sources/StripKit/Input/HotkeyService.swift`.
+- `make bundle` then `open --env STRIP_VERBOSE=1 /path/to/.build/Strip.app` (bypassing `make open`,
+  which doesn't currently thread through env vars) is what actually got a trusted, verbose-logging
+  launch. Re-verify against the current `Makefile` — this may have changed.
+
+## Research phase (do this before proposing a plan)
+
+1. Read `CLAUDE.md`, `PLAN.md`, `HANDOFF.md`, `MEASURING.md` for conventions and the verified-seam
+   map. This test suite is infra, not a perf change, so the MEASURE-FIRST gate doesn't apply — but the
+   "keep pure logic headlessly testable" and "plan before coding" conventions do.
+2. Read `Sources/StripKit/Input/HotkeyService.swift` for the full `HotkeyCommand` → key-code mapping,
+   and `Sources/StripKit/AppDelegate.swift`'s `rebuildMenu()` for the exact current menu item titles
+   and submenu structure (these are the two input surfaces a smoke test drives).
+3. Read every `Log.line(...)` call site (grep `Sources/StripKit`) to inventory what's actually
+   observable in `/tmp/strip.log` today, and in what format — this defines what a test *can* assert
+   without resorting to screenshots.
+4. Check the current `Makefile` for `bundle`/`open`/`test` targets and whether env-var passthrough for
+   `STRIP_VERBOSE` (or similar future flags) needs a small addition to support automated runs cleanly.
+5. Time-boxed spike (≤30 min of actual investigation): try driving the rail's hover/click behavior via
+   an XCUITest UI-testing target instead of raw `osascript`/`CGEvent`. Record whether it's more
+   reliable. This determines whether v1's scope can include mouse-driven chip interactions or must
+   defer them.
+6. Survey how other AX-only, no-SIP macOS window managers (if referenced in existing engram memory —
+   `mem_search "strip-wm-spike"` — or code comments referencing `rift`/`OmniWM`) handle integration
+   testing, if at all. Don't assume there's a known-good pattern to copy; this may come back empty.
+
+## Plan phase — decisions to lock before writing code
+
+Produce a plan (this repo's plan-before-code convention) that resolves:
+- **Where the suite lives**: e.g. `scripts/e2e/` for shell+osascript smoke tests, vs. a real XCTest UI
+  target if the spike above justifies it. Prefer the simplest thing that gives reliable coverage —
+  don't reach for an XCTest UI target just because it exists if plain osascript + log-parsing covers
+  the reliable 80%.
+- **What v1 covers**: hotkey-driven commands (slide, focus move, carry/swap, layout switch, pin,
+  spring cycle, release-all) and menu-driven commands (layout submenu, minimap position submenu,
+  focus-ring toggle, overview) — the two proven-reliable input surfaces. Explicitly decide, and write
+  down, what's deferred to "manual verification only" (almost certainly: hover previews, and any
+  interaction that depends on precise mouse positioning over custom SwiftUI content) unless the
+  XCUITest spike changes that.
+- **Fixture/determinism strategy**: assertions against `/tmp/strip.log` need a known, reproducible
+  window set (app names, count, on-screen order) before a run starts. Decide how the suite establishes
+  that — e.g. a setup step that launches a fixed set of lightweight apps (TextEdit, Terminal, Calculator
+  — whatever's reliably present) with known titles, and a teardown step that quits them, so runs don't
+  depend on whatever windows happen to be open on the dev machine.
+- **Assertion style**: parse the latest `apply:` block from `/tmp/strip.log` after each driven action
+  and assert on slot/window-id/frame fields, rather than screenshot diffing. Reserve screenshots for a
+  small number of purely-visual checks (e.g. "did the rail actually render on this edge") where no log
+  line exists to assert against instead.
+- **Invocation**: a `make e2e` (or similarly named) target, kept **separate** from `make test` and from
+  the `swift-test-on-edit.sh` PostToolUse hook — this suite needs a granted Accessibility (and
+  sometimes Screen Recording) permission on the running machine and a real display, so it cannot be
+  CI-portable or run on every edit. Document that constraint prominently in its own README/section
+  rather than leaving it implicit.
+- **Failure reporting**: on a failed assertion, what gets surfaced — the relevant `/tmp/strip.log`
+  excerpt at minimum; a screenshot artifact optionally, for visual-only checks.
+
+Write the plan, get it reviewed, THEN implement.
+
+## Implementation phase
+
+- Build the fixture setup/teardown, the driver (osascript wrappers for hotkeys + menu items), and the
+  `/tmp/strip.log` parser/assertions, in that order — land pure/parseable pieces first the same way
+  the rest of this codebase prefers pure-logic-first slicing.
+- Cover at minimum: layout switch (1/2/3-up), slide (prev/next), focus move (J/K), the `moveFocused`
+  swap (⌃⌥⇧H/L), pin/unpin, release-all/resume, and the minimap-position menu (bottom/top/left/right).
+- Keep `swift test` green throughout — this is additive infra, not a refactor of existing logic.
+- Document how to run the suite (prerequisites: built+signed app, granted Accessibility, no other
+  automation fighting for the mouse/keyboard during the run) in a new `TESTING.md` or a section of
+  `PLAN.md`/`HANDOFF.md` — follow whichever the reviewed plan specifies.
+- Verify the suite actually catches a regression: temporarily break something small and obvious (e.g.
+  swap two arguments in a layout call), confirm the suite fails with a legible message, then revert.
+
+## Acceptance
+
+- A runnable command (e.g. `make e2e`) exercises the reliable hotkey+menu surface end-to-end against a
+  real launched app and reports pass/fail per scenario without a human eyeballing screenshots for each
+  one.
+- The suite's scope boundary (what's automated vs. manual-only) is explicit and documented, backed by
+  the XCUITest spike's actual finding rather than an assumption.
+- `swift test` and the new suite are both green; a deliberately-introduced regression is caught by the
+  new suite.

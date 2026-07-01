@@ -125,6 +125,7 @@ make test            # swift test (pure engine tests, no permission needed)
 make bundle          # build + assemble + sign .build/Strip.app
 make open            # bundle + launch via LaunchServices (TRUSTED; logs -> /tmp/strip.log)
 make run             # bundle + run inner binary (NOT trusted from shell; build-check only)
+make e2e             # hotkey/menu integration smoke suite — see TESTING.md (needs Accessibility + clean desktop)
 ```
 **Hotkeys (behind ⌃⌥ = Control+Option)**
 | Keys | Action | Status |
