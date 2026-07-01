@@ -21,6 +21,7 @@ public final class OverlayController {
     /// (a slide keeps the count constant → the panel frame is untouched, the highlight moves inside it).
     private var lastRailCount = -1
     private weak var lastRailScreen: NSScreen?
+    private var lastRailEdge: RailEdge?
     /// The status panel is fixed-geometry (full visible width, fixed height) so the pill never forces a
     /// synchronous layout on a slide — it's only (re)positioned when the display changes.
     private weak var lastStatusScreen: NSScreen?
@@ -38,10 +39,21 @@ public final class OverlayController {
     private var focusAccent: NSColor = .white
 
     /// Live window thumbnails for the overview cards. A single shared instance so the SwiftUI
-    /// `@ObservedObject` identity stays stable across re-renders while the overview is open.
+    /// `@ObservedObject` identity stays stable across re-renders while the overview is open. Also
+    /// backs the rail hover preview (below), which passes `evictOthers: false` so it doesn't wipe
+    /// Overview's cached images.
     private let thumbnails = ThumbnailStore()
     /// Whether we've already asked for Screen Recording this process (prompt at most once).
     private var didRequestScreenRecording = false
+
+    /// The hover-preview panel (lazily created), the chip currently hovered, and the debounce work
+    /// item that fires the actual capture + panel show after a settle delay.
+    private var previewPanel: NSPanel?
+    private var hoveredId: CGWindowID?
+    private var hoverWork: DispatchWorkItem?
+    private static let previewSettleDelay: TimeInterval = 0.3
+    private static let previewThumbSize = CGSize(width: 220, height: 140)
+    private static let previewGap: CGFloat = 10
 
     /// Behind-window blur radius for the overview backdrop. Light enough that the windows behind stay
     /// recognizable (NSVisualEffectView is effectively ~30–50); tune here for more/less blur.
@@ -74,7 +86,8 @@ public final class OverlayController {
         // render). The rail's onTap reads `self?.onCenter` dynamically, so it stays correct even though
         // `onCenter` is assigned later by AppDelegate.
         let model = self.model
-        railHosting = NSHostingView(rootView: RailHost(model: model, onTap: { _ in }))
+        railHosting = NSHostingView(rootView: RailHost(model: model, onTap: { _ in }, onOverview: {},
+                                                        onHoverChange: { _, _ in }))
         statusHosting = NSHostingView(rootView: StatusHost(model: model))
         railPanel = Self.makePanel(level: .statusBar)
         statusPanel = Self.makePanel(level: .statusBar)
@@ -96,7 +109,11 @@ public final class OverlayController {
         focusRingPanel.contentView = ringView
 
         // Now that all stored properties exist, install the real tap handler once (reads onCenter live).
-        railHosting.rootView = RailHost(model: model, onTap: { [weak self] id in self?.onCenter?(id) })
+        railHosting.rootView = RailHost(model: model, onTap: { [weak self] id in self?.onCenter?(id) },
+                                         onOverview: { [weak self] in self?.toggleOverview() },
+                                         onHoverChange: { [weak self] id, hovering in
+                                             self?.handleChipHover(id, hovering: hovering)
+                                         })
     }
 
     /// Latest snapshot awaiting render, and whether a coalesced render is already queued. Re-rendering
@@ -150,15 +167,18 @@ public final class OverlayController {
         if model.rail != snapshot.rail { model.rail = snapshot.rail }
         let status = StatusFields(snapshot)
         if model.status != status { model.status = status }
+        if model.railEdge != snapshot.railEdge { model.railEdge = snapshot.railEdge }
 
         // The rail is center-anchored and constant-width during a slide, so only re-fit + reposition
-        // it when the chip count or display changed; otherwise the moving highlight repaints in place.
+        // it when the chip count, display, or edge changed; otherwise the moving highlight repaints
+        // in place.
         if railNeedsRefit(oldCount: lastRailCount, newCount: snapshot.rail.count)
-            || lastRailScreen !== snapshot.screen {
+            || lastRailScreen !== snapshot.screen || lastRailEdge != snapshot.railEdge {
             let railSize = fit(railHosting, in: railPanel)
-            railPanel.setFrameOrigin(NSPoint(x: vis.midX - railSize.width / 2, y: vis.minY + 16))
+            railPanel.setFrameOrigin(railOrigin(for: snapshot.railEdge, size: railSize, in: vis))
             lastRailCount = snapshot.rail.count
             lastRailScreen = snapshot.screen
+            lastRailEdge = snapshot.railEdge
         }
         show(railPanel)
 
@@ -171,6 +191,65 @@ public final class OverlayController {
             lastStatusScreen = snapshot.screen
         }
         show(statusPanel)
+    }
+
+    /// The rail panel's origin for a given screen edge, within the display's visible frame. `.top`
+    /// offsets below the status pill's strip so the two never overlap; `.left`/`.right` center the
+    /// (now-vertical, see `FilmRailView`) rail on the cross-axis instead of the horizontal midpoint.
+    private func railOrigin(for edge: RailEdge, size: NSSize, in vis: NSRect) -> NSPoint {
+        switch edge {
+        case .bottom: return NSPoint(x: vis.midX - size.width / 2, y: vis.minY + 16)
+        case .top:    return NSPoint(x: vis.midX - size.width / 2,
+                                      y: vis.maxY - Self.statusStripHeight - 16 - size.height)
+        case .left:   return NSPoint(x: vis.minX + 16, y: vis.midY - size.height / 2)
+        case .right:  return NSPoint(x: vis.maxX - 16 - size.width, y: vis.midY - size.height / 2)
+        }
+    }
+
+    /// Hover a rail chip → after a short settle delay, capture and show a live thumbnail preview
+    /// adjacent to the whole rail (not positioned per-chip — see `RailPreviewView`'s doc comment).
+    /// Hover-away cancels any pending capture and hides the preview.
+    private func handleChipHover(_ id: CGWindowID, hovering: Bool) {
+        hoverWork?.cancel()
+        guard hovering else {
+            if hoveredId == id {
+                hoveredId = nil
+                previewPanel?.orderOut(nil)
+            }
+            return
+        }
+        hoveredId = id
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.hoveredId == id,
+                  let item = self.lastSnapshot?.rail.first(where: { $0.id == id }) else { return }
+            self.thumbnails.refresh(ids: [id], pointSize: Self.previewThumbSize, evictOthers: false)
+            self.showPreview(for: item)
+        }
+        hoverWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.previewSettleDelay, execute: work)
+    }
+
+    /// (Re)build and position the hover-preview panel, adjacent to the rail on the screen-interior
+    /// side of whichever edge it's anchored to — generalizing "centered above the rail" to any
+    /// `RailEdge` so the preview works the same regardless of where the user moved the minimap.
+    private func showPreview(for item: RailItem) {
+        let panel = previewPanel ?? Self.makePanel(level: .popUpMenu)
+        let hosting = NSHostingView(rootView: RailPreviewView(item: item, thumbnails: thumbnails))
+        panel.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        let size = hosting.fittingSize
+        panel.setContentSize(size)
+        let rail = railPanel.frame
+        let origin: NSPoint
+        switch lastRailEdge ?? .default {
+        case .bottom: origin = NSPoint(x: rail.midX - size.width / 2, y: rail.maxY + Self.previewGap)
+        case .top:    origin = NSPoint(x: rail.midX - size.width / 2, y: rail.minY - Self.previewGap - size.height)
+        case .left:   origin = NSPoint(x: rail.maxX + Self.previewGap, y: rail.midY - size.height / 2)
+        case .right:  origin = NSPoint(x: rail.minX - Self.previewGap - size.width, y: rail.midY - size.height / 2)
+        }
+        panel.setFrameOrigin(origin)
+        panel.orderFrontRegardless()
+        previewPanel = panel
     }
 
     /// Reposition the focus ring around the focused window's live frame (Quartz global), or hide it

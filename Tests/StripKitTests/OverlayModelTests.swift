@@ -7,7 +7,7 @@ import XCTest
 final class OverlayModelTests: XCTestCase {
     private func item(id: CGWindowID = 1, letter: String = "A", accent: NSColor = .red,
                       assigned: Bool = true, active: Bool = false, pinned: Bool = false) -> RailItem {
-        RailItem(id: id, letter: letter, appName: "App", title: "Title", accent: accent,
+        RailItem(id: id, letter: letter, appName: "App", title: "Title", accent: accent, icon: nil,
                  assigned: assigned, active: active, pinned: pinned, aspect: 1.6)
     }
 

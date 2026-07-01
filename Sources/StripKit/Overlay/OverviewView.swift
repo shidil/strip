@@ -83,7 +83,7 @@ struct OverviewView: View {
             // The live film rail, pinned bottom-center — the same chrome that floats over the managed
             // windows, mirrored inside the overview so the strip stays visible (the overview panel
             // otherwise covers the rail's own lower-level panel). Clicking a chip centers + dismisses.
-            FilmRailView(items: items) { id in onCenter(id); onClose() }
+            FilmRailView(items: items, onTap: { id in onCenter(id); onClose() }, onOverview: onClose)
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .padding(.bottom, 24)
         }

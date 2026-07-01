@@ -327,12 +327,34 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
 "swap to center/right slot" → swap-with-neighbor (below). Raw wording is preserved in `IDEAS.md`.
 
 **Minimap (film rail) polish** — the rail panel is already interactive (`.statusBar`, `onTapGesture`):
-- **App icons instead of letter chip** (S) — `RailChip`/`RailItem`; `NSRunningApplication.icon`.
-- **Window previews on hover or hotkey** (M) — reuse `ThumbnailStore`/`WindowThumbnailer`; throttle on
-  hover. Caveat: parked/minimized windows can't capture → placeholder (known M5 limit).
-- **Reposition the minimap** (S–M) — rail panel frame is computed in `OverlayController`; make the edge
-  configurable (persist via M9 config).
-- **Overview-trigger button in the minimap** (S) — rail takes clicks → `OverlayController.toggleOverview()`.
+- ~~**App icons instead of letter chip** (S)~~ — ✅ shipped 2026-07-01: `ManagedWindow.icon`
+  (`NSRunningApplication(processIdentifier: ax.pid)?.icon`) threaded through `RailItem`/`railSnapshot`;
+  `RailChip` shows the real app icon over the existing accent-filled backdrop, falling back to the
+  letter chip when `icon` is `nil` (e.g. app already quit, or a synthetic test `RailItem`).
+- ~~**Window previews on hover or hotkey** (M)~~ — ✅ shipped 2026-07-01 (hover trigger): reuses
+  `ThumbnailStore`/`WindowThumbnailer`. `FilmRailView`'s `.onHover` → `OverlayController.handleChipHover`
+  debounces ~300ms, then captures just that window and shows `RailPreviewView` in a lazily-created
+  panel positioned adjacent to the whole rail (not per-chip — avoids new SwiftUI coordinate-space
+  plumbing), on the screen-interior side of whichever `RailEdge` the rail is anchored to. **Fixed a
+  latent bug in the reused pipeline along the way:** `ThumbnailStore.refresh` unconditionally evicted
+  any cached image not in the passed `ids` — fine for Overview (which always passes the *complete*
+  ring), but a single-window hover request would have silently wiped every other cached Overview
+  thumbnail. Added `evictOthers: Bool = true` (Overview keeps the default; hover passes `false`).
+  Caveat carried over from M5: parked/minimized windows can't capture → placeholder. ✅ user-confirmed
+  live (screenshot: preview renders above the rail, accent-bordered, real thumbnail).
+- ~~**Reposition the minimap** (S–M)~~ — ✅ shipped 2026-07-01, scoped up to a **true vertical rail**
+  (not just corner-anchoring) per user decision during planning. New `RailEdge` (`bottom`/`top`/`left`/
+  `right`, persisted in `PersistedSettings` exactly like `focusRingEnabled`) drives both
+  `OverlayController.railOrigin` (screen placement; `.top` offsets below the status pill) and
+  `FilmRailView`'s container axis (`HStack` for top/bottom, `VStack` for left/right — the "FILM" label
+  stays unrotated, a deliberate simplification). Status-bar menu → "Minimap position" submenu calls
+  `StripController.setRailEdge`. Live-verified on all 4 edges via screenshot (vertical stacking on
+  left/right, no overlap with the status pill on top, correct default on bottom).
+- ~~**Overview-trigger button in the minimap** (S)~~ — ✅ shipped 2026-07-01: a small grid-glyph button
+  appended to the rail (trailing end of the `HStack`/`VStack`) calls the existing
+  `OverlayController.toggleOverview()` directly (no new plumbing needed — both live on the same class).
+  The rail mirrored inside Overview itself (`OverviewView`) always stays horizontal/bottom regardless
+  of the live rail's `RailEdge`, and its button closes Overview instead of reopening it.
 
 **Mouse / Dock interaction:**
 - **Follow OS/Dock focus → re-center** (M) — `WindowObserver` already receives `kAXFocusedWindowChanged`

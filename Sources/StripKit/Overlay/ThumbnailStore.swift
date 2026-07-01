@@ -25,15 +25,21 @@ final class ThumbnailStore: ObservableObject {
 
     /// Capture thumbnails for `ids` and merge them into `images`. No-op while a capture is in flight,
     /// so rapid reopens don't stack overlapping ScreenCaptureKit passes. Call on the main thread.
-    func refresh(ids: [CGWindowID], pointSize: CGSize) {
+    ///
+    /// `evictOthers` (default `true`, the Overview behavior) drops any cached image whose id isn't in
+    /// `ids` — correct when `ids` is the *complete* current set (e.g. the whole ring). A caller
+    /// capturing a single window in isolation (e.g. a rail hover preview) must pass `false`, or it
+    /// would wipe every other window's cached thumbnail on each hover.
+    func refresh(ids: [CGWindowID], pointSize: CGSize, evictOthers: Bool = true) {
         guard !inFlight else { return }
         inFlight = true
         Task { [weak self] in
             let captured = await WindowThumbnailer.capture(ids: ids, pointSize: pointSize, scale: Self.scale)
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                // Merge: keep stale images for ids still present that failed this pass; drop the rest.
-                var merged = self.images.filter { ids.contains($0.key) }
+                // Merge: keep stale images for ids still present that failed this pass; drop the rest
+                // (unless `evictOthers` is false, in which case nothing outside `ids` is touched).
+                var merged = evictOthers ? self.images.filter { ids.contains($0.key) } : self.images
                 for (id, image) in captured { merged[id] = image }
                 self.images = merged
                 self.inFlight = false

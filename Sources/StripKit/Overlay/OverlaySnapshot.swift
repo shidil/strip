@@ -13,6 +13,8 @@ public struct RailItem: Identifiable, Equatable {
     public let title: String
     /// Deterministic per-app accent (`Theme.accent`).
     public let accent: NSColor
+    /// The owning app's real icon (`ManagedWindow.icon`); `nil` falls back to `letter`.
+    public let icon: NSImage?
     /// Occupies a currently-visible slot → full opacity (otherwise dimmed).
     public let assigned: Bool
     /// The window in the focused slot → white outline.
@@ -24,25 +26,28 @@ public struct RailItem: Identifiable, Equatable {
     public let aspect: CGFloat
 
     public init(id: CGWindowID, letter: String, appName: String, title: String, accent: NSColor,
-                assigned: Bool, active: Bool, pinned: Bool, aspect: CGFloat) {
+                icon: NSImage?, assigned: Bool, active: Bool, pinned: Bool, aspect: CGFloat) {
         self.id = id
         self.letter = letter
         self.appName = appName
         self.title = title
         self.accent = accent
+        self.icon = icon
         self.assigned = assigned
         self.active = active
         self.pinned = pinned
         self.aspect = aspect
     }
 
-    /// `accent` is an `NSColor` (a class) so equality can't be auto-synthesized — compare it via
-    /// `isEqual`. Drives the overlay's skip-when-unchanged pre-filter (don't invalidate SwiftUI when
-    /// the rail is identical, e.g. a spring-cycle re-apply).
+    /// `accent`/`icon` are class types so equality can't be auto-synthesized — compare via `isEqual`.
+    /// Drives the overlay's skip-when-unchanged pre-filter (don't invalidate SwiftUI when the rail is
+    /// identical, e.g. a spring-cycle re-apply).
     public static func == (lhs: RailItem, rhs: RailItem) -> Bool {
         lhs.id == rhs.id && lhs.letter == rhs.letter && lhs.appName == rhs.appName
-            && lhs.title == rhs.title && lhs.accent.isEqual(rhs.accent) && lhs.assigned == rhs.assigned
-            && lhs.active == rhs.active && lhs.pinned == rhs.pinned && lhs.aspect == rhs.aspect
+            && lhs.title == rhs.title && lhs.accent.isEqual(rhs.accent)
+            && ((lhs.icon == nil && rhs.icon == nil) || (lhs.icon?.isEqual(rhs.icon) ?? false))
+            && lhs.assigned == rhs.assigned && lhs.active == rhs.active && lhs.pinned == rhs.pinned
+            && lhs.aspect == rhs.aspect
     }
 }
 
@@ -84,10 +89,12 @@ public struct StatusFields: Equatable {
 public final class OverlayModel: ObservableObject {
     @Published public var rail: [RailItem]
     @Published public var status: StatusFields
+    @Published public var railEdge: RailEdge
 
-    public init(rail: [RailItem], status: StatusFields) {
+    public init(rail: [RailItem], status: StatusFields, railEdge: RailEdge = .default) {
         self.rail = rail
         self.status = status
+        self.railEdge = railEdge
     }
 }
 
@@ -118,9 +125,12 @@ public struct OverlaySnapshot {
     public let transLabel: String
     /// Wall-clock "h:mm" (refreshed on each render).
     public let clock: String
+    /// Which screen edge the film rail is anchored to.
+    public let railEdge: RailEdge
 
     public init(rail: [RailItem], screen: NSScreen, activeApp: String, activeAccent: NSColor?,
-                layoutLabel: String, modeLabel: String, transLabel: String, clock: String) {
+                layoutLabel: String, modeLabel: String, transLabel: String, clock: String,
+                railEdge: RailEdge) {
         self.rail = rail
         self.screen = screen
         self.activeApp = activeApp
@@ -129,5 +139,6 @@ public struct OverlaySnapshot {
         self.modeLabel = modeLabel
         self.transLabel = transLabel
         self.clock = clock
+        self.railEdge = railEdge
     }
 }

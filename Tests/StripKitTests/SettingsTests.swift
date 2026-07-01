@@ -51,4 +51,22 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(settings.cols, 3)
         XCTAssertTrue(settings.focusRingEnabled, "missing flag defaults to ring-on, decode succeeds")
     }
+
+    /// A blob written before `railEdge` existed (the minimap-polish addition) must still decode —
+    /// mirrors the `focusRingEnabled` forward-compatibility test above.
+    func testSettingsDecodesOlderBlobWithoutRailEdge() throws {
+        let legacy = """
+        {"config":{"outerPadding":8,"innerGap":8,"focusRatio":0.5,"monocleWidthFraction":0.6,"heightFraction":1.0,"newWindowPlacement":"focusCenter"},"cols":3,"emphasisEqual":false,"springIndex":0,"focusRingEnabled":true}
+        """.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(PersistedSettings.self, from: legacy)
+        XCTAssertEqual(settings.railEdge, .bottom, "missing edge defaults to .bottom, decode succeeds")
+    }
+
+    func testRailEdgeRoundTripsThroughSettings() throws {
+        let original = PersistedSettings(
+            config: .default, cols: 3, emphasisEqual: false, springIndex: 0, railEdge: .left)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(PersistedSettings.self, from: data)
+        XCTAssertEqual(decoded.railEdge, .left)
+    }
 }

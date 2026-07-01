@@ -16,6 +16,9 @@ public struct ManagedWindow: Identifiable {
 
     public var accent: NSColor { Theme.accent(for: accentKey) }
     public var letter: String { Theme.letter(for: appName) }
+    /// The owning app's real icon, for the rail chip. `nil` falls back to the letter chip (e.g. the
+    /// app already quit but its window lingers, or a headless/test context with no running app).
+    public var icon: NSImage? { NSRunningApplication(processIdentifier: ax.pid)?.icon }
 
     public init(id: CGWindowID, ax: AXWindow, appName: String, accentKey: String, title: String, frame: CGRect) {
         self.id = id

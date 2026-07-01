@@ -64,6 +64,9 @@ public final class StripController {
     /// status-bar menu and persisted. When `false` we forward `nil` frames so the overlay hides the
     /// ring at its source — the animator keeps reporting frames, we just swallow them.
     public private(set) var focusRingEnabled = true
+    /// Which screen edge the film rail (minimap) is anchored to. Toggled from the status-bar menu
+    /// and persisted, exactly like `focusRingEnabled`.
+    public private(set) var railEdge: RailEdge = .default
 
     public init() {
         self.state = StripState(cols: 3, emphasis: .focus, focusSlot: .C)
@@ -90,14 +93,15 @@ public final class StripController {
             animator.config = SpringConfig.presets[springIndex]
         }
         focusRingEnabled = s.focusRingEnabled
-        Log.line("restored settings: \(state.cols)-up, focusRatio \(String(format: "%.2f", state.config.focusRatio)), height \(String(format: "%.2f", state.config.heightFraction)), ring \(focusRingEnabled ? "on" : "off")")
+        railEdge = s.railEdge
+        Log.line("restored settings: \(state.cols)-up, focusRatio \(String(format: "%.2f", state.config.focusRatio)), height \(String(format: "%.2f", state.config.heightFraction)), ring \(focusRingEnabled ? "on" : "off"), rail \(railEdge.rawValue)")
     }
 
     /// Persist the current sizing knobs and layout posture.
     private func persist() {
         PersistedSettings(config: state.config, cols: state.cols,
                           emphasisEqual: state.emphasis == .equal, springIndex: springIndex,
-                          focusRingEnabled: focusRingEnabled).save()
+                          focusRingEnabled: focusRingEnabled, railEdge: railEdge).save()
     }
 
     /// Show or hide the focus ring (status-bar toggle). Persists, then refreshes the overlay
@@ -113,6 +117,17 @@ public final class StripController {
         } else {
             onFocusFrame?(nil)
         }
+    }
+
+    /// Move the film rail to a different screen edge (status-bar toggle). Persists, then re-applies
+    /// so a fresh `OverlaySnapshot` carrying the new edge is emitted — the edge itself doesn't affect
+    /// window tiling, so this is the same harmless/idempotent re-apply "Re-tile" already performs.
+    public func setRailEdge(_ edge: RailEdge) {
+        guard edge != railEdge else { return }
+        railEdge = edge
+        Log.line("rail edge: \(edge.rawValue)")
+        persist()
+        apply()
     }
 
     public var managedCount: Int { state.ring.count }
@@ -502,7 +517,7 @@ public final class StripController {
             guard let w = windowsById[id] else { return nil }
             let aspect = w.frame.height > 0 ? w.frame.width / w.frame.height : 1.6
             return RailItem(id: id, letter: w.letter, appName: w.appName, title: w.title,
-                            accent: w.accent, assigned: assigned.contains(id),
+                            accent: w.accent, icon: w.icon, assigned: assigned.contains(id),
                             active: id == activeId, pinned: pinned.contains(id), aspect: aspect)
         }
 
@@ -517,7 +532,7 @@ public final class StripController {
         return OverlaySnapshot(rail: items, screen: screen, activeApp: activeApp,
                                activeAccent: activeAccent, layoutLabel: layoutLabel,
                                modeLabel: modeLabel, transLabel: animator.config.name,
-                               clock: Self.clock())
+                               clock: Self.clock(), railEdge: railEdge)
     }
 
     private static let clockFormatter: DateFormatter = {

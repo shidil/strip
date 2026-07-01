@@ -141,6 +141,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         add(menu, "Slide film ▶ (next)", #selector(slideNext), "]")
         add(menu, "Pin / unpin focused slot", #selector(togglePin), "p")
 
+        let railMenu = NSMenu()
+        for edge in RailEdge.allCases {
+            let item = add(railMenu, edge.rawValue.capitalized, #selector(setRailEdge(_:)), "")
+            item.state = controller.railEdge == edge ? .on : .off
+            item.representedObject = edge
+        }
+        let railItem = NSMenuItem(title: "Minimap position", action: nil, keyEquivalent: "")
+        railItem.submenu = railMenu
+        menu.addItem(railItem)
+
         menu.addItem(.separator())
         add(menu, controller.isSuspended ? "Resume managing (⌃⌥0)" : "Release windows (⌃⌥0)",
             #selector(toggleRelease), "")
@@ -178,6 +188,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func slidePrev() { controller.rotate(-1) }
     @objc private func slideNext() { controller.rotate(1) }
     @objc private func togglePin() { controller.togglePin() }
+    @objc private func setRailEdge(_ sender: NSMenuItem) {
+        guard let edge = sender.representedObject as? RailEdge else { return }
+        controller.setRailEdge(edge)
+        rebuildMenu()
+    }
     @objc private func toggleRelease() { controller.releaseAll(); rebuildMenu() }
     @objc private func toggleFocusRing() { controller.setFocusRing(!controller.focusRingEnabled); rebuildMenu() }
     @objc private func toggleOverview() { overlay.toggleOverview() }
