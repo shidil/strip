@@ -181,6 +181,40 @@ public struct StripState {
         return rebuilt
     }
 
+    /// Swap the window in the *focused* slot with whichever window occupies its immediate neighbor
+    /// slot in direction `dir` (+1 right / −1 left) — a clean two-window exchange, guaranteed to land
+    /// the carried window in that exact neighbor slot. Keyboard focus rides along with it. No-op if
+    /// the focused slot is empty/pinned, or has no unpinned neighbor in that direction (e.g. already
+    /// at the strip's edge, or monocle) — pinned windows never move and are skipped over when looking
+    /// for a neighbor, since they don't participate in the flow.
+    ///
+    /// The anchor slot always *displays* `centerId` by identity, not by ring position (see
+    /// `resolve()`) — so a swap that moves a window into or out of the anchor slot must also hand
+    /// `centerId` to whichever window is now anchoring, or the swap wouldn't actually relocate the
+    /// anchor's displayed window (it would keep showing the old centerId, wherever it drifted to).
+    /// With cols 1–3 every reachable adjacent slot pair includes the anchor, so this fixup covers
+    /// every swap this method can perform today.
+    ///
+    /// Pure (mutates only `self`) so the swap is unit-testable without AppKit/AX.
+    public mutating func moveFocused(_ dir: Int) {
+        guard pins[focusSlot] == nil else { return }
+        let assign = StripLayout(self).assignment()
+        guard let a = assign[focusSlot] else { return }
+
+        let unpinnedSlots = slots.filter { pins[$0] == nil }
+        guard let fi = unpinnedSlots.firstIndex(of: focusSlot) else { return }
+        let ni = fi + dir
+        guard unpinnedSlots.indices.contains(ni) else { return }
+        let neighborSlot = unpinnedSlots[ni]
+        guard let b = assign[neighborSlot], a != b,
+              let ia = ring.firstIndex(of: a), let ib = ring.firstIndex(of: b) else { return }
+
+        ring.swapAt(ia, ib)
+        if centerId == a { centerId = b } else if centerId == b { centerId = a }
+        focusSlot = neighborSlot
+        clampToValidSlots()
+    }
+
     /// The slot focus lands on after moving `dir` (+1 right / −1 left) across the *occupied* slots —
     /// pinned slots included, so a pinned window is reachable. Clamps at the ends (no wrap), matching
     /// the existing focus-edge behavior. Pure, so J/K navigation is unit-testable without AppKit/AX.

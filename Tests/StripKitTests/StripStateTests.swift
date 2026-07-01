@@ -172,6 +172,81 @@ final class StripStateTests: XCTestCase {
         XCTAssertEqual(s.centerId, before.centerId)
     }
 
+    // MARK: - moveFocused (carry the focused window along the film)
+
+    func testMoveFocusedOnCenterSwapsCleanlyWithRightNeighbor() {
+        // Focus on the primary slot (the common case). Carrying it right must cleanly swap C and
+        // R's contents — L is left completely undisturbed (no cascade, unlike the old ring-carry).
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .C)
+        XCTAssertEqual(assignment(s)[.L], 2)
+        XCTAssertEqual(assignment(s)[.R], 4)
+
+        s.moveFocused(1)
+
+        XCTAssertEqual(s.centerId, 4, "the old right-neighbor window becomes the new center")
+        XCTAssertEqual(assignment(s)[.C], 4)
+        XCTAssertEqual(assignment(s)[.L], 2, "left flank is untouched by the swap")
+        XCTAssertEqual(assignment(s)[.R], 3, "the old center is displaced into R")
+        XCTAssertEqual(s.focusSlot, .R, "focus rides the carried window into R")
+    }
+
+    func testMoveFocusedOffCenterSwapsIntoCenterAndFocusRidesAlong() {
+        // Focus moved off-center (J/K) to L, which holds window 2 while 3 stays centered. Carrying
+        // right must swap L and C cleanly: window 2 becomes the new center, the old center (3) is
+        // displaced to L, and R is untouched. Focus rides with window 2 into C.
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .L)
+        XCTAssertEqual(assignment(s)[.L], 2, "window 2 is focused, in L")
+        XCTAssertEqual(assignment(s)[.R], 4)
+
+        s.moveFocused(1)
+
+        XCTAssertEqual(s.centerId, 2, "the carried window becomes the new center")
+        XCTAssertEqual(assignment(s)[.C], 2)
+        XCTAssertEqual(assignment(s)[.L], 3, "the old center is displaced into L")
+        XCTAssertEqual(assignment(s)[.R], 4, "right flank is untouched")
+        XCTAssertEqual(s.focusSlot, .C, "focus rides the moved window into C")
+    }
+
+    func testMoveFocusedSkipsOverAPinnedSlotToReachTheNextUnpinnedNeighbor() {
+        // C is pinned (window 3); focus is on L (window 1). Carrying right must skip the pinned
+        // center entirely and swap directly with R — the pinned window never moves.
+        var s = StripState(ring: ring, centerId: 1, cols: 3, emphasis: .focus, pins: [.C: 3],
+                           focusSlot: .L)
+        XCTAssertEqual(assignment(s)[.R], 2)
+
+        s.moveFocused(1)
+
+        XCTAssertEqual(s.pins[.C], 3, "the pinned window never moves")
+        XCTAssertEqual(assignment(s)[.C], 3)
+        XCTAssertEqual(assignment(s)[.L], 2, "R's old occupant swaps into L")
+        XCTAssertEqual(assignment(s)[.R], 1, "the carried window lands in R, skipping the pin")
+        XCTAssertEqual(s.focusSlot, .R)
+    }
+
+    func testMoveFocusedIsNoOpInMonocle() {
+        // No neighbor slot exists to swap with when only C is present.
+        var s = StripState(ring: ring, centerId: 3, cols: 1, focusSlot: .C)
+        let before = s
+        s.moveFocused(1)
+        XCTAssertEqual(s.ring, before.ring)
+        XCTAssertEqual(s.centerId, before.centerId)
+    }
+
+    func testMoveFocusedIsNoOpWhenFocusedSlotIsPinned() {
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, pins: [.C: 3],
+                           focusSlot: .C)
+        let before = s
+        s.moveFocused(1)
+        XCTAssertEqual(s.ring, before.ring, "pinned focused window is never carried")
+        XCTAssertEqual(s.focusSlot, .C)
+    }
+
+    func testMoveFocusedIsNoOpOnEmptyRing() {
+        var s = StripState(ring: [], centerId: nil, cols: 3, focusSlot: .C)
+        s.moveFocused(1)
+        XCTAssertTrue(s.ring.isEmpty)
+    }
+
     // MARK: - Closing the centered window (successor pick, M6)
 
     func testClosingCenteredWindowFallsToLeftNeighbor() {

@@ -340,15 +340,28 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
   re-center the focused ring window. Watch-outs: Strip's own focus change must not re-trigger
   (self-suppression already exists), and ⌘-Tab churn could slide the strip on every app-switch.
 - **Drag-rearrange windows in the minimap** (L) — rail drag → ring permutation in `StripState` → re-tile.
-  Heaviest minimap interaction; only reorders our model, no AX drag of real windows.
-- **Modifier-click swap in the minimap** (S–M) — rail click + modifier → swap ring positions (shares the
-  swap primitive with swap-with-neighbor below).
+  Heaviest minimap interaction; only reorders our model, no AX drag of real windows. Can build on the
+  ring-swap primitive `StripState.moveFocused` below.
+- **Modifier-click swap in the minimap** (S–M) — rail click + modifier → swap ring positions. Can build
+  on the ring-swap primitive `StripState.moveFocused` below.
 
 **Navigation / commands:**
 - **Window search (overview / spotlight style)** (M) — filter `RailItem.title`/`appName` → `setCenter(id)`;
   a search field inside overview or its own panel.
-- **Swap focused ↔ neighbor** (S) — ring-swap command, focus rides the moved window, to the center/right
-  neighbor. Pure `StripState`/`StripLayout` op.
+- ~~**Swap focused ↔ neighbor** (S)~~ — ✅ shipped 2026-07-01: `StripState.moveFocused(_:)` (pure,
+  tested) swaps the focused slot's window with its immediate slot-neighbor (L↔C or C↔R), guaranteed
+  to land exactly there — a clean two-window exchange, everything else undisturbed. Focus rides along
+  with the carried window. No-op on a pinned focused slot; pinned slots are skipped over (never moved)
+  when looking for the neighbor to swap with. `StripController.moveFocused` wraps it; ⌃⌥⇧H/L
+  (`AppDelegate` `.movePrev`/`.moveNext`) call it.
+  - Because the anchor slot always *displays* `centerId` by identity, not by ring position (see
+    `resolve()`), a swap into/out of the anchor hands `centerId` to whichever window moves there —
+    otherwise the swap wouldn't actually relocate what's shown in that slot.
+  - This replaced (and improves on) the pre-existing ⌃⌥⇧H/L implementation, whose old ring-index
+    swap only worked correctly when the focused window *was* the centered one, and even then could
+    cascade and shift a slot two positions away rather than swapping with its literal neighbor — an
+    adversarial review caught this by comparing live `/tmp/strip.log` output against the literal
+    "swap to the center/right neighbor" wording in this backlog entry and `IDEAS.md`.
 
 ## Deferred (revisit only if the setup changes)
 

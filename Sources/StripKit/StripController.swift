@@ -351,11 +351,11 @@ public final class StripController {
         state.focusSlot = state.focusSlotAfterMove(dir)
     }
 
-    /// Carry the centered window along the film, reordering it (`moveWindow`, prototype lines 341-347).
-    public func moveWindow(_ dir: Int) {
-        guard let center = state.centerId, let i = state.ring.firstIndex(of: center) else { return }
-        let j = posMod(i + dir, state.ring.count)
-        state.ring.swapAt(i, j)
+    /// Carry the *focused* window along the film, reordering it (`moveFocused`, prototype lines
+    /// 341-347) — the state transition lives in `StripState.moveFocused` (pure, unit-tested); this
+    /// just re-applies so the reordered film re-tiles.
+    public func moveFocused(_ dir: Int) {
+        state.moveFocused(dir)
         apply()
     }
 

@@ -4,41 +4,67 @@
 > task starts — it is NOT the roadmap or status record.** For roadmap, milestone status, architecture,
 > the verified-seam map, and the do-not-relearn gotchas, read **`PLAN.md`** (the source of truth).
 > Engram memory: `mem_context` for project `wm`, or `mem_search "strip-wm-spike"`.
->
-> Fill the `<…>` placeholders below for the current task; delete this quote block when you do.
 
 ---
 
 ## Task
 
-<One line: what to build/fix. e.g. "M8 — workspaces (multiple strips)" or "Bug: minimize-on-close
-leaves a gap in the layout (Slack).">
+Backlog item "Swap focused ↔ neighbor" — generalize the film-carry command (⌃⌥⇧H/L) from the
+*centered* window to whichever window actually has keyboard focus.
 
 ## Why / outcome
 
-<What the user gets when this is done, and why it matters. 1–3 sentences.>
+PLAN.md already documents ⌃⌥⇧H/L as "carry **focused** window along film (reorder)", but the
+implementation (`StripController.moveWindow`) actually operates on `state.centerId`, not
+`state.focusSlot`'s occupant. These are usually the same window, but diverge once focus is moved
+off-center with J/K (`focusMove`) without re-centering. Today, pressing ⌃⌥⇧H/L in that state
+silently carries the *wrong* window (the centered one, not the one the focus ring is drawn around) —
+a mismatch between documented and actual behavior. Fixing this also gives the two backlog items
+"modifier-click swap in the minimap" and "drag-rearrange in the minimap" a correct, reusable
+ring-swap primitive to build on.
 
 ## Acceptance
 
-<Concrete, checkable conditions. e.g.:>
-- `make test` stays green; new pure logic is unit-tested headlessly.
-- <observable live behavior, verified via `make open` + `/tmp/strip.log` and/or the author's eyes>
+- `make test` stays green; the new pure logic is unit-tested headlessly in `StripStateTests`.
+- When focus is on the centered slot (the common case today), behavior is unchanged from the old
+  `moveWindow` (regression safety).
+- When focus has been moved off-center (J/K), ⌃⌥⇧H/L now carries the *focused* window, and keyboard
+  focus follows it to its new slot ("focus rides the moved window").
+- A window pinned to the focused slot is a no-op (pins stay fixed; carrying a pinned window would
+  break that invariant).
+- Live-verified via `make open` + `/tmp/strip.log`: J to move focus off-center, then ⌃⌥⇧L, and confirm
+  the focus ring follows the window that moved (not the centered one).
 
 ## Scope / seams to touch
 
-<The specific files/methods this task hooks into. Cross-reference PLAN.md's "Verified seams" map.
-Name the seam, not just the file. e.g.:>
-- `StripController` — owns the ring + `refreshAndApply()`; <what changes here>.
-- `<file>` — <what changes here>.
+- `Sources/StripKit/Model/StripState.swift` — add a pure mutating method (e.g. `moveFocused(_ dir:
+  Int)`) alongside `togglePin`/`setCenter`/`insertManaged`. Find the focused window via
+  `StripLayout(self).assignment()[focusSlot]`, swap its ring position with its ring-neighbor at
+  `dir`, then look up its new slot in the recomputed assignment and set `focusSlot` to that — "focus
+  rides the moved window". No-op if `pins[focusSlot] != nil` or the ring is empty.
+- `Sources/StripKit/StripController.swift` — replace `moveWindow(_ dir:)` (currently swaps
+  `state.ring` directly using `state.centerId`) with a thin `moveFocused(_ dir:)` that calls
+  `state.moveFocused(dir)` then `apply()`.
+- `Sources/StripKit/AppDelegate.swift` — update the two call sites (`.movePrev`/`.moveNext` cases,
+  lines ~76-77) from `controller.moveWindow` to `controller.moveFocused`.
+- `PLAN.md` — remove the now-shipped "Swap focused ↔ neighbor" line from the "Navigation / commands"
+  backlog table; note in the two dependent bullets (modifier-click swap, drag-rearrange) that the
+  swap primitive now exists.
 
 ## Constraints / watch-outs
 
-<Task-specific traps. Pull the relevant ones from PLAN.md "Critical gotchas" and CLAUDE.md, e.g.:>
-- Keep pure layout/state logic in `Layout/` + `Model/` so it stays headless-testable.
-- Coordinates are **Quartz global** internally; convert to Cocoa only at the AppKit boundary.
-- Perf-sensitive paths (`Animation/`, AX enumeration/reconcile) need a MEASURE-FIRST justification
-  (`MEASURING.md`) — and will be checked by the `measurement-enforcer` agent.
-- AX/coordinate/animation/identity edits will be checked by the `ax-invariant-reviewer` agent.
+- Keep the new logic in `Model/StripState.swift` as a **pure mutating method** — no AppKit/AX — so
+  it's unit-testable without a GUI (per CLAUDE.md: "extract pure logic so new decisions stay
+  headless-testable").
+- `moveWindow` was previously **completely untested** — don't just port it, add real coverage for
+  both the regression case (focus == center) and the new case (focus off-center).
+- Remember center is *sticky to `centerId`*, not to ring position: `assign[primarySlot]` always shows
+  `centerId` regardless of ring reordering (as long as it's unpinned). So carrying a non-centered
+  focused window can shift *other* slots by more than one visual position — that's expected, matching
+  how the existing centered-window carry already behaved (verify via the manual trace in this task's
+  research, not just intuition).
+- This is pure `Model`/`Layout` work — no AX, no coordinates, no animation — so it does **not** need
+  the `ax-invariant-reviewer` or `measurement-enforcer` agents.
 
 ---
 
