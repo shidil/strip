@@ -26,7 +26,7 @@ checkpoint() {
 # prints it plus any immediately-following verbose per-window lines and returns 0; else returns 1.
 # Private: shared by wait_for_new_apply and wait_for_slotted_count below.
 _latest_apply_block_since() {
-  local since="$1" total new_lines block
+  local since="$1" total new_lines block expected actual
   total=$(wc -l < "$STRIP_E2E_LOG" 2>/dev/null | tr -d ' ')
   total=${total:-0}
   [ "$total" -gt "$since" ] || return 1
@@ -45,6 +45,13 @@ _latest_apply_block_since() {
     }
   ' <<<"$new_lines")
   [ -n "$block" ] || return 1
+  # logState (StripController.swift) writes the summary line, then each per-window verbose line,
+  # each individually hopping through Log.line's serial DispatchQueue.async — so the summary can be
+  # visible here microseconds before the rest land. Don't hand back a block that's still missing
+  # verbose lines the summary itself promised (slotted+parked); let the caller's poll loop retry.
+  expected=$(( $(parse_count "$block" slotted) + $(parse_count "$block" parked) ))
+  actual=$(grep -c "slot=.*frame=(" <<<"$block")
+  [ "$expected" -gt 0 ] && [ "$actual" -lt "$expected" ] && return 1
   printf '%s\n' "$block"
 }
 

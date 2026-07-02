@@ -27,6 +27,7 @@ make open            # bundle + launch via LaunchServices (the only TRUSTED run;
 make run             # bundle + run inner binary — build-check only, NOT trusted
 make setup-signing   # one-time: create the stable "Strip Dev" code-signing identity
 make e2e             # AppKit/AX/menu smoke suite — needs Accessibility + a clean desktop; see TESTING.md
+make e2e-vm          # same suite, isolated in a Tart VM — no clean-desktop precondition; see TESTING.md
 ```
 Single test: `swift test --filter StripLayoutTests/testRingWrapsAround` (or a whole suite:
 `swift test --filter StripLayoutTests`).

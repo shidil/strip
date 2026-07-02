@@ -1,25 +1,31 @@
 #!/bin/bash
 # Reproducible window set for the e2e suite: three built-in macOS apps, each producing exactly one
-# window with a distinct, predictable app name — TextEdit, Activity Monitor, Preview. Setup quits
+# window with a distinct, predictable app name — Console, Activity Monitor, Preview. Setup quits
 # any already-running instances first (so a prior session's stray windows can't skew a scenario's
 # expected slotted/parked counts), then relaunches fresh. Teardown quits them again.
 #
 # NOT Calculator, despite being the obvious "no save prompt" choice: its window is permanently
 # non-resizable (confirmed empirically — a System Events resize request is silently ignored), and
 # StripController.isTileableSize requires a new window to be >= 20% of display width and 40% of
-# display height before it's admitted to the ring. A stock Calculator/TextEdit/Preview window is
+# display height before it's admitted to the ring. A stock Calculator/Console/Preview window is
 # comfortably below that on most displays, so every fixture window is explicitly resized after
 # launch — this is not optional set-dressing, it's required for Strip to manage it at all.
 #
-# Also explicitly `activate`s each app: launching TextEdit via `make new document` alone left it
-# with System Events `visible` false (never brought to the foreground), which excludes it from
+# NOT TextEdit either, despite being an obvious document-app candidate: confirmed empirically that
+# `tell application "TextEdit" to make new document` against a fully-quit TextEdit creates its own
+# default document *and* fulfills the explicit request — two windows, not one — on a factory-default
+# TextEdit install (no persisted-preference fix was found for this). Console has no such document
+# model, so `open -a Console` after a full quit reliably yields exactly one window.
+#
+# Also explicitly `activate`s each app: launching an app via a bare `open -a` while it's not already
+# frontmost can leave it with System Events `visible` false, which excludes it from
 # StripController.allWindows()'s `!app.isHidden` filter just as surely as being too small does.
 #
 # Does NOT wait for Strip to reconcile the new windows — that's a log-observable fact, and belongs
 # next to the rest of the log-polling logic in lib/log_assert.sh. Callers (run.sh) checkpoint the log
 # before calling setup_fixture, then wait_for_new_apply after.
 
-FIXTURE_APPS=(TextEdit "Activity Monitor" Preview)
+FIXTURE_APPS=(Console "Activity Monitor" Preview)
 FIXTURE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE_IMAGE="$FIXTURE_DIR/fixtures/placeholder.png"
 
@@ -78,14 +84,13 @@ _resize_window() {
     >/dev/null 2>&1 || true
 }
 
-# setup_fixture — quits then relaunches TextEdit (blank doc), Activity Monitor, and Preview
-# (placeholder image), resizing each so exactly 3 tileable, predictable windows exist. Does not wait
-# for Strip to see them.
+# setup_fixture — quits then relaunches Console, Activity Monitor, and Preview (placeholder image),
+# resizing each so exactly 3 tileable, predictable windows exist. Does not wait for Strip to see them.
 setup_fixture() {
   quit_fixture_apps
   _ensure_fixture_image
 
-  osascript -e 'tell application "TextEdit" to make new document' >/dev/null
+  open -a "Console"
   open -a "Activity Monitor"
   open -a "Preview" "$FIXTURE_IMAGE"
   sleep 1

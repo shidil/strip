@@ -60,10 +60,17 @@ if ! pgrep -x Strip >/dev/null; then
 fi
 # Wait for the hotkey tap to come up, not just the process — Strip's window-open observers can
 # still be mid-setup right after process launch, and a fixture app opened in that gap can be missed
-# until an explicit re-scan (handled below).
-wait_for_line "hotkeys:" 0 5 >/dev/null || true
+# until an explicit re-scan (handled below). Both HotkeyService log lines contain "hotkeys:" (tap
+# active vs. failed to create event tap), so check which one matched instead of ignoring the result —
+# a real tap failure (Accessibility not granted) should fail fast here, not surface later as a
+# confusing hotkey-scenario timeout.
+hotkey_line=$(wait_for_line "hotkeys:" 0 5) || true
+if [[ "$hotkey_line" == *"failed to create event tap"* ]]; then
+  echo "✗ Strip's hotkey tap failed to start — is Accessibility granted? ($hotkey_line)" >&2
+  exit 1
+fi
 
-echo "Setting up fixture (TextEdit, Activity Monitor, Preview)…"
+echo "Setting up fixture (Console, Activity Monitor, Preview)…"
 setup_fixture
 sleep 1
 # Force a re-enumerate in case Strip's window-open observer missed a fixture app's launch (a race
@@ -71,7 +78,7 @@ sleep 1
 click_menu "Re-tile / Re-scan"
 fixture_block=$(wait_for_total_count 3 0 8)
 if [ $? -ne 0 ]; then
-  echo "✗ Strip is managing more than the 3 fixture windows (TextEdit, Activity Monitor, Preview)." >&2
+  echo "✗ Strip is managing more than the 3 fixture windows (Console, Activity Monitor, Preview)." >&2
   echo "  This suite needs a clean desktop — quit any other windowed apps (Slack, browsers," >&2
   echo "  terminals, etc.) and re-run 'make e2e'. Last known state:" >&2
   tail -n 10 "$STRIP_LOG" | sed 's/^/    /' >&2

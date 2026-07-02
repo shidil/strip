@@ -5,7 +5,7 @@ BIN    := $(APP)/Contents/MacOS/$(APP_NAME)
 BUNDLE_ID := com.spike.strip
 SIGN_ID   ?= Strip Dev
 
-.PHONY: build bundle run open profile test e2e clean setup-signing
+.PHONY: build bundle run open profile test e2e e2e-vm clean setup-signing
 
 ## Compile the Swift package.
 build:
@@ -76,6 +76,13 @@ test:
 ## fixture windows) — see TESTING.md.
 e2e: bundle
 	@bash scripts/e2e/run.sh
+
+## Same suite as `e2e`, but run inside an isolated Tart macOS VM instead of the real desktop — no
+## clean-desktop precondition to maintain by hand. Needs one-time setup (scripts/e2e/vm/setup.sh,
+## mostly manual) and the VM already running (`tart run strip-e2e` in its own terminal) — see
+## TESTING.md's "Isolated runs via a Tart VM" section.
+e2e-vm: bundle
+	@bash scripts/e2e/vm/run.sh
 
 clean:
 	swift package clean

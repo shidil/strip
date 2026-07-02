@@ -77,15 +77,19 @@ scripts/e2e/
   fixtures/placeholder.png   # generated on demand by fixture.sh, not committed
 ```
 
-**Fixture** (`lib/fixture.sh`): three windows the suite fully controls — **TextEdit** (blank
-document), **Activity Monitor**, and **Preview** (opened on a generated placeholder image). Setup
-quits any already-running instances first, relaunches them, **activates** each, and **resizes** each
-window to 60% of the screen in both dimensions. Both of those steps are load-bearing, not
-cosmetic — see §6.
+**Fixture** (`lib/fixture.sh`): three windows the suite fully controls — **Console**, **Activity
+Monitor**, and **Preview** (opened on a generated placeholder image). Setup quits any
+already-running instances first, relaunches them, **activates** each, and **resizes** each window to
+60% of the screen in both dimensions. Both of those steps are load-bearing, not cosmetic — see §6.
 
-Calculator was the obvious first choice (no save prompt, always present) and was dropped: its window
-is **permanently non-resizable** (confirmed empirically — a `System Events` resize request is
-silently ignored), so it can never clear the tileability bar below.
+Two apps were tried and dropped before landing on this set — both confirmed empirically, not
+assumed:
+- **Calculator**: its window is **permanently non-resizable** (a `System Events` resize request is
+  silently ignored), so it can never clear the tileability bar below.
+- **TextEdit**: `tell application "TextEdit" to make new document` against a fully-quit TextEdit
+  creates its own default document *and* fulfills the explicit request — two windows, not one — on a
+  factory-default install. No persisted-preference fix was found. Console has no document model, so
+  a plain `open -a Console` after a full quit reliably yields exactly one window.
 
 **Driver** (`lib/driver.sh`): `send_hotkey <name>` sends one of the v1-scope `⌃⌥`/`⌃⌥⇧` chords (key
 codes are the same ones documented in `MEASURING.md` §5, source of truth
@@ -130,17 +134,21 @@ there's no log line to assert against — that stays a manual `screencapture` + 
   `StripController.isTileableSize` requires a *newly appearing* window to be at least 20% of the
   display's width and 40% of its height before Strip admits it to the ring
   (`StripController.swift`, `minTileWidthFraction`/`minTileHeightFraction`). A stock
-  TextEdit/Preview window is comfortably below that on most displays — the fixture resizes each
-  window after launch specifically to clear this, not for cosmetics. If `make e2e` ever reports
-  "Strip is managing more than the 3 fixture windows" — or the opposite, that it's managing *fewer*
-  — check this first, not the driver.
-- **A window opened via a bare AppleScript verb (e.g. `make new document`) can be invisible to
-  Strip.** `StripController.allWindows()` skips apps where `NSRunningApplication.isHidden` is true,
-  and TextEdit launched via `tell application "TextEdit" to make new document` alone was never
-  brought to the foreground — System Events reported `visible: false` for it. `fixture.sh` explicitly
-  `activate`s every fixture app after launching it. This looks identical to an observer-timing race
-  at first — it isn't; retrying "Re-tile / Re-scan" doesn't help because the window is being filtered
-  the same way on every scan, not merely missed once.
+  Console/Activity Monitor/Preview window is comfortably below that on most displays — the fixture
+  resizes each window after launch specifically to clear this, not for cosmetics. If `make e2e` ever
+  reports "Strip is managing more than the 3 fixture windows" — or the opposite, that it's managing
+  *fewer* — check this first, not the driver.
+- **A window opened via a bare `open -a` can be invisible to Strip if it never becomes frontmost.**
+  `StripController.allWindows()` skips apps where `NSRunningApplication.isHidden` is true. `fixture.sh`
+  explicitly `activate`s every fixture app after launching it. This looks identical to an
+  observer-timing race at first — it isn't; retrying "Re-tile / Re-scan" doesn't help because the
+  window is being filtered the same way on every scan, not merely missed once.
+- **Document-based apps can create more windows than you asked for.** `tell application "TextEdit"
+  to make new document` against a fully-quit TextEdit produces *two* windows — its own
+  launch-time default document, plus the explicitly requested one — with no persisted-preference fix
+  found. This is why the fixture uses Console (no document model) instead. If a future fixture app
+  swap reaches for anything document-based, verify the exact quit→relaunch cycle produces exactly
+  one window before trusting it.
 - **The suite needs a genuinely clean desktop, and there's no robust way around that.** Strip manages
   *every* app window that clears `classify()`, not just the fixture's — if other real windows (a
   browser, Slack, a terminal) are open, they get counted too and the exact slotted/parked assertions
@@ -161,3 +169,70 @@ left behind (documented inline where it matters, e.g. `scenario_focus_move` rese
 itself rather than assuming where a prior scenario left it). Keep new hotkeys/menu items in sync with
 `Sources/StripKit/Input/HotkeyService.swift` / `AppDelegate.swift`'s `rebuildMenu()` — those are the
 sources of truth this suite mirrors, not the other way around.
+
+## 7. Isolated runs via a Tart VM
+
+`make e2e` needs a genuinely clean desktop (§5) — Strip manages every real window it sees, so
+quitting your own Slack/browser/terminal windows before every trustworthy run gets old fast.
+`make e2e-vm` runs the *exact same, unmodified* `scripts/e2e/{run.sh,scenarios.sh,lib/*}` suite
+inside an isolated [Tart](https://github.com/cirruslabs/tart) macOS VM instead — nothing else is
+ever running in it, so there's no desktop to keep clean.
+
+**One-time setup** (mostly manual — some of it genuinely can't be scripted headlessly):
+
+```sh
+scripts/e2e/vm/setup.sh
+```
+
+Walks through: installing Tart, pulling the `macos-sequoia-base` community image (~25GB download,
+~50GB on disk — checked against the live registry manifest, not a guess), booting it, disabling
+sleep/screensaver, and a handful of one-time permission grants inside the VM. Safe to re-run partway
+through if interrupted.
+
+**Regular runs**, once set up:
+
+```sh
+tart run strip-e2e     # in your own terminal — leave this running
+make e2e-vm             # in another terminal, as many times as you like
+```
+
+`make e2e-vm` pushes the freshly host-built `.build/Strip.app` plus `scripts/e2e/` into the VM (via
+`tar` piped through `tart exec`, not a directory mount — simpler, no VM restart needed), launches the
+suite inside a real `Terminal.app` session in the guest, and streams the result back.
+
+**Why a VM window has to actually be open** (found the hard way, not assumed): `tart run`'s window
+needs a real interactive terminal to render at all — launched from a backgrounded/tool-driven shell,
+the process starts but never shows a window. And `--no-graphics` mode goes further and breaks GUI app
+rendering entirely (a fixture app couldn't even create its window) — so unlike the host suite, this
+path can't be made fully headless; the VM window must be open (it doesn't need focus or interaction
+once running).
+
+**Why UI-scripting has to run inside a guest `Terminal.app` session, not a bare `tart exec`**: this
+consumed most of the setup effort, so it's worth recording precisely. A direct
+`tart exec strip-e2e osascript -e 'tell application "System Events" to ...'` fails with:
+
+```
+execution error: System Events got an error: osascript is not allowed assistive access. (-1719)
+```
+
+— **even with every relevant TCC grant showing `auth_value=2` (allowed) in
+`/Library/Application Support/com.apple.TCC/TCC.db`.** Restarting the guest agent, restarting
+`System Events`, and granting Accessibility to `tart-guest-agent`/`osascript` directly all failed to
+fix it. What actually works: running the identical command as a child of a real `Terminal.app`
+process (`tell application "Terminal" to do script "..."`), with Terminal itself granted both
+**Accessibility** and, less obviously, **Developer Tools** (System Settings → Privacy & Security →
+Developer Tools — a separate, newer permission category from Accessibility/Automation, easy to miss,
+and the specific piece that made this work). `scripts/e2e/vm/run.sh` is built around this: it writes
+a small runner script into the guest and launches it via `do script`, then polls a marker file for
+completion rather than reading a return value directly.
+
+**Why the fixture had to change for the VM** (Console instead of TextEdit — `lib/fixture.sh`'s
+history, §5): a factory-default TextEdit's own launch-time default document collided with the
+fixture's explicit "make new document" request, reliably producing two windows instead of one on a
+freshly-provisioned VM. This wasn't VM-specific in principle — it's just that the host machine this
+suite was first built against happened not to hit it — but the fix (swap to a non-document-based
+app) improves both paths, not just the VM one.
+
+**Explicitly not done**: scripting the TCC grants via SIP-disable + direct `TCC.db` writes. It would
+remove the manual step, but the VM is meant to be trustworthy scaffolding, not a security-hardening
+exercise — a one-time click-through is a small, honest cost.

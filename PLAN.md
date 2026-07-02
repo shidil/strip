@@ -126,6 +126,7 @@ make bundle          # build + assemble + sign .build/Strip.app
 make open            # bundle + launch via LaunchServices (TRUSTED; logs -> /tmp/strip.log)
 make run             # bundle + run inner binary (NOT trusted from shell; build-check only)
 make e2e             # hotkey/menu integration smoke suite — see TESTING.md (needs Accessibility + clean desktop)
+make e2e-vm          # same suite, isolated in a Tart VM — see TESTING.md (one-time setup required)
 ```
 **Hotkeys (behind ⌃⌥ = Control+Option)**
 | Keys | Action | Status |
