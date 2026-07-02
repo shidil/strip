@@ -177,6 +177,41 @@ parse_frame_for_literal_app() {
   grep -oE '\(-?[0-9]+,-?[0-9]+ [0-9]+x[0-9]+\)' <<<"$line" | head -1 | tr -d '()' | tr ',x' '  '
 }
 
+# parse_clamp_actual_for_app <since_line> <exact appName> [timeout_seconds] — polls for a
+# "frame-clamped: <appName> requested=(...) actual=(...)" line (StripController.reconcileClampedFrame,
+# fired when the animator's settle-time AX read-back doesn't match the commanded frame) appearing
+# after <since_line>, and prints its actual=(...) frame as "x y w h". Times out (status 1) if no such
+# line appears — most windows never clamp, so timing out here is the common, fast path, not an error.
+parse_clamp_actual_for_app() {
+  local since="$1" app="$2" timeout="${3:-3}" iterations
+  iterations=$(( timeout * 10 ))
+  for ((i = 0; i < iterations; i++)); do
+    local total
+    total=$(wc -l < "$STRIP_E2E_LOG" 2>/dev/null | tr -d ' ')
+    total=${total:-0}
+    if [ "$total" -gt "$since" ]; then
+      local line
+      line=$(tail -n "+$((since + 1))" "$STRIP_E2E_LOG" | grep -F "frame-clamped: $app requested=" | head -1)
+      if [ -n "$line" ]; then
+        grep -oE 'actual=\(-?[0-9]+,-?[0-9]+ [0-9]+x[0-9]+\)' <<<"$line" | head -1 \
+          | sed -E 's/^actual=//' | tr -d '()' | tr ',x' '  '
+        return 0
+      fi
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+# parse_num_after <line> <label> — prints the number immediately following the literal "<label>: " in
+# <line> (e.g. label "focus ratio" against "... focus ratio: 0.55" -> "0.55"; label "gap" against
+# "... gap: 4 pad: 12" -> "4"). Used for the standalone sizing-knob echo lines (adjustFocusRatio/
+# adjustHeight/adjustGap in StripController.swift), which are logged separately from — and just
+# before — the apply: block they trigger, so they aren't part of any block wait_for_new_apply returns.
+parse_num_after() {
+  grep -oE "$2: -?[0-9]+(\.[0-9]+)?" <<<"$1" | head -1 | grep -oE -- '-?[0-9]+(\.[0-9]+)?$'
+}
+
 # assert_eq <actual> <expected> <description> — prints a failure line to stderr and returns 1 on
 # mismatch; silent success otherwise.
 assert_eq() {

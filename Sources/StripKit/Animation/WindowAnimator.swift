@@ -57,6 +57,22 @@ public final class WindowAnimator: NSObject {
     /// phantom window doesn't wedge a slot. (M7 AX-drop recovery.)
     public var onWindowLost: ((CGWindowID) -> Void)?
 
+    /// Fired (on the main thread) once a window's motion settles if the real, live AX frame doesn't
+    /// match what we commanded — an app can silently clamp a resize to its own minimum content size
+    /// (a harder constraint than the OS-level clamping `AXWindow.setFrame`'s double-`setSize` idiom
+    /// defeats; see BUGS.md "min-size clamp"). The controller reconciles its cached frame to reality;
+    /// this class doesn't retry or fight the clamp.
+    public var onFrameClamped: ((CGWindowID, _ requested: CGRect, _ actual: CGRect) -> Void)?
+
+    /// Loose equality for comparing a commanded frame against a live AX read-back — needs slack wider
+    /// than the spring's own 0.5px settle threshold (`SpringScalar.settled`) to absorb real-world
+    /// integer rounding on the read-back. `internal static` (not `private`) so it's unit-testable
+    /// without spinning up a live animator (display link + real screen).
+    internal static func frameMatches(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 1.5) -> Bool {
+        abs(a.origin.x - b.origin.x) <= tolerance && abs(a.origin.y - b.origin.y) <= tolerance
+            && abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
+    }
+
     private var displayLink: CADisplayLink?
     private var linkScreen: NSScreen?
     private var lastTimestamp: CFTimeInterval = 0
@@ -243,7 +259,7 @@ public final class WindowAnimator: NSObject {
                 // Settled and we've already delivered this exact frame — stop paying AX IPC every
                 // tick just because a sibling is still moving (perf 1.2a).
                 if lastWritten[id] == entry.target { continue }
-                if !write(id: id, frame: entry.target, ax: entry.ax) { allDone = false }
+                if !write(id: id, frame: entry.target, ax: entry.ax, verifyOnSettle: true) { allDone = false }
             } else {
                 entries[id] = entry
                 allDone = false
@@ -269,8 +285,12 @@ public final class WindowAnimator: NSObject {
     /// Returns `true` if the write was enqueued, `false` if it was dropped (a previous write to this
     /// window is still in flight) — the caller retries dropped settle-frames so a window never ends a
     /// frame short of its target.
+    /// `verifyOnSettle` requests a one-shot read-back of the real AX frame after this write, to catch
+    /// an app silently clamping the resize to its own minimum content size — set `true` only by the
+    /// settle-branch call in `tick()`, which (via the `lastWritten` skip above) fires exactly once
+    /// per genuinely new target, not every tick, so this stays off the hot path.
     @discardableResult
-    private func write(id: CGWindowID, frame: CGRect, ax: AXWindow) -> Bool {
+    private func write(id: CGWindowID, frame: CGRect, ax: AXWindow, verifyOnSettle: Bool = false) -> Bool {
         let sp = Signpost.log
         // The silent backpressure drop: a write requested while the previous one is still in flight
         // on the per-pid queue. Each emit is one occurrence — count them in Instruments to quantify
@@ -288,6 +308,9 @@ public final class WindowAnimator: NSObject {
         lastWritten[id] = frame
         queue(for: ax.pid).async { [weak self] in
             let err = ax.setFrame(frame, skipInitialResize: skipInitialResize)
+            // One extra per-element AX read, off-main on this same per-pid queue — only for the write
+            // that claims to finish the motion, not every tick (see doc comment above).
+            let achieved = verifyOnSettle ? ax.frame : nil
             sp.emitEvent("setFrame.done", "id=\(id) err=\(err.rawValue)")
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -299,6 +322,10 @@ public final class WindowAnimator: NSObject {
                     self.lastWritten[id] = nil
                     self.failures.forget(id)
                     self.onWindowLost?(id)
+                    return
+                }
+                if verifyOnSettle, err == .success, let achieved, !Self.frameMatches(achieved, frame) {
+                    self.onFrameClamped?(id, frame, achieved)
                 }
             }
         }

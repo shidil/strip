@@ -46,6 +46,9 @@ accessory app, so its menu is `menu bar 1`, not the usual app's `menu bar 2`).
 | Minimap position (all 4 edges, via menu) | |
 | Focus-ring toggle (via menu) | |
 | Overview open/close (via menu) | |
+| Widen/narrow the focus window (⌃⌥= / ⌃⌥-) | |
+| Grow/shrink window height (⌃⌥↑ / ⌃⌥↓) | |
+| Tighten/loosen gaps & padding (⌃⌥[ / ⌃⌥]) | |
 
 **Why hover is manual-only — an actual finding, not a guess.** The task that produced this suite
 found raw `CGEvent` `.mouseMoved` posting unreliable for triggering SwiftUI's `.onHover`. The
@@ -116,10 +119,13 @@ gap is exactly the class of bug this project has hit repeatedly (ghost windows, 
 the M7 AX-drop case) and a log-only suite is structurally blind to it. `scenario_layout_switch`
 additionally cross-checks the **real** AX frame of each fixture window (`real_window_frame` in
 `driver.sh`, polled via `_assert_real_frame` in `scenarios.sh` since the spring in
-`Animation/Spring.swift` takes a moment to settle) against what the log claims. This check is
-currently **expected to fail** on narrow displays — see BUGS.md ("Strip doesn't detect when a
-commanded window frame is silently clamped") — that's a real, confirmed gap in Strip itself, not a
-test bug, and is being left red on purpose rather than papered over.
+`Animation/Spring.swift` takes a moment to settle) against what the log claims. On narrow displays
+some apps (Activity Monitor, Console) clamp a resize to their own minimum content size, which this
+check catches — but it passes either way: an exact real/logged match, **or** a `frame-clamped:` log
+line (`StripController.reconcileClampedFrame`) whose recorded `actual=` matches the live real frame,
+proving Strip detected and honestly recorded the drift rather than silently disagreeing with reality.
+See BUGS.md ("Fixed" section) for the fix; only a real detection *failure* (no match and no correctly
+recorded `frame-clamped:` line) fails this scenario now.
 
 ## 4. Reading a failure
 
@@ -170,6 +176,14 @@ there's no log line to assert against — that stays a manual `screencapture` + 
   finding that synthetic keystrokes/clicks aren't as reliable as real hardware input. `run.sh` puts a
   short settle delay before each scenario; if a scenario fails in the full run but passes in
   isolation (§4), that's almost certainly why — it's a suite timing margin, not a Strip bug.
+- **The sizing knobs (focus ratio, height, gap/padding) persist to `UserDefaults` across launches**
+  (`Model/Settings.swift`, key `strip.settings.v1` under `com.spike.strip`) — a prior interactive
+  session or e2e run can leave them anywhere inside their clamped ranges
+  (`LayoutConfig.focusRatioRange`/`heightRange`, gap/padding floored at 0 with no upper bound).
+  `run.sh` resets that key before every launch so each run starts from the same state, and
+  `scenario_focus_ratio`/`scenario_window_height` check *direction* (never-increase on narrow/shrink,
+  never-decrease on widen/grow — tolerating a clamped no-op only exactly at the documented bound)
+  rather than an absolute value, so they can't flake even without the reset.
 
 ## 6. Extending the suite
 

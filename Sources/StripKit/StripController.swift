@@ -76,6 +76,9 @@ public final class StripController {
             self.onFocusFrame?(self.focusRingEnabled ? frame : nil)
         }
         animator.onWindowLost = { [weak self] id in self?.dropLostWindow(id) }
+        animator.onFrameClamped = { [weak self] id, requested, actual in
+            self?.reconcileClampedFrame(id, requested: requested, actual: actual)
+        }
         restoreSettings()
     }
 
@@ -671,6 +674,21 @@ public final class StripController {
         state.clampToValidSlots()
         Log.line("ax-drop: window \(id) dead (AX writes failing) — dropped from strip")
         apply()
+    }
+
+    /// The animator reports when a window's real, settled AX frame doesn't match what we commanded —
+    /// an app can silently clamp a resize to its own minimum content size, a harder constraint than
+    /// the OS-level clamping `AXWindow.setFrame`'s double-`setSize` idiom defeats (BUGS.md "min-size
+    /// clamp"). Reconcile the cached frame to reality and log the discovery. Deliberately does NOT
+    /// re-`apply()`: `SlotGeometry` has no minimum-size awareness, so a re-layout would recompute the
+    /// same impossible target and clamp again next settle — an infinite loop.
+    private func reconcileClampedFrame(_ id: CGWindowID, requested: CGRect, actual: CGRect) {
+        guard var w = windowsById[id] else { return }
+        w.frame = actual
+        windowsById[id] = w
+        Log.line(String(format: "frame-clamped: %@ requested=(%.0f,%.0f %.0fx%.0f) actual=(%.0f,%.0f %.0fx%.0f)",
+                        w.appName, requested.origin.x, requested.origin.y, requested.width, requested.height,
+                        actual.origin.x, actual.origin.y, actual.width, actual.height))
     }
 
     /// Find every managed window whose center sits outside `vis` (parked off-screen) and write it

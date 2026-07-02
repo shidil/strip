@@ -23,6 +23,12 @@ send_hotkey() {
     movePrev) code=4; mods="control down, option down, shift down" ;;
     togglePin) code=35; mods="control down, option down" ;;
     releaseAll) code=29; mods="control down, option down" ;;
+    focusWider) code=24; mods="control down, option down" ;;
+    focusNarrower) code=27; mods="control down, option down" ;;
+    taller) code=126; mods="control down, option down" ;;
+    shorter) code=125; mods="control down, option down" ;;
+    gapTighter) code=33; mods="control down, option down" ;;
+    gapLooser) code=30; mods="control down, option down" ;;
     *)
       echo "send_hotkey: unknown command '$name'" >&2
       return 1
