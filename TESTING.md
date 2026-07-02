@@ -110,6 +110,17 @@ apply: <cols>-up · <focus|equal> on <screen> — N slotted, M parked[ — pinne
 There's no separate "this is centered" marker in the log; center is inferred structurally (see
 `scenario_focus_move`/`scenario_move_focused_swap` in `scenarios.sh` for how the suite uses this).
 
+**Trusting the log vs. trusting reality**: every assertion above checks what Strip *itself* logged —
+its own account of the frame it decided on, not independent proof the real window landed there. That
+gap is exactly the class of bug this project has hit repeatedly (ghost windows, blank-slot-on-minimize,
+the M7 AX-drop case) and a log-only suite is structurally blind to it. `scenario_layout_switch`
+additionally cross-checks the **real** AX frame of each fixture window (`real_window_frame` in
+`driver.sh`, polled via `_assert_real_frame` in `scenarios.sh` since the spring in
+`Animation/Spring.swift` takes a moment to settle) against what the log claims. This check is
+currently **expected to fail** on narrow displays — see BUGS.md ("Strip doesn't detect when a
+commanded window frame is silently clamped") — that's a real, confirmed gap in Strip itself, not a
+test bug, and is being left red on purpose rather than papered over.
+
 ## 4. Reading a failure
 
 Each scenario prints its own mismatches as it goes (`assert_eq` prints `expected` vs. `got`) plus a

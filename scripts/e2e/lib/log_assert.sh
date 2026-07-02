@@ -165,6 +165,18 @@ parse_slot_app() {
   grep -E "slot=$2([[:space:]]|$)" <<<"$1" | awk '{print $3}' | head -1
 }
 
+# parse_frame_for_literal_app <block> <exact appName> — prints "x y w h" for the verbose line
+# containing the literal appName, or nothing (status 1) if absent. Matched as a plain substring
+# rather than by awk field position: the fixed-width name column (StripController.swift's "%-16@")
+# only lines up with awk's whitespace-based field splitting for single-word names — "Activity
+# Monitor" spans two fields — so this only works for names the caller already knows verbatim.
+parse_frame_for_literal_app() {
+  local block="$1" app="$2" line
+  line=$(grep -F "$app" <<<"$block" | grep "frame=(" | head -1)
+  [ -n "$line" ] || return 1
+  grep -oE '\(-?[0-9]+,-?[0-9]+ [0-9]+x[0-9]+\)' <<<"$line" | head -1 | tr -d '()' | tr ',x' '  '
+}
+
 # assert_eq <actual> <expected> <description> — prints a failure line to stderr and returns 1 on
 # mismatch; silent success otherwise.
 assert_eq() {

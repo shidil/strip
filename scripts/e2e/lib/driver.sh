@@ -58,3 +58,13 @@ click_submenu() {
       end tell
     end tell" >/dev/null
 }
+
+# real_window_frame <appName> — prints "x y w h" for the LIVE, on-screen AX frame of appName's
+# window 1, queried directly via System Events — ground truth, independent of anything Strip logged.
+# AX position/size are already top-left-origin, Y-down ("Quartz global", per CLAUDE.md/
+# Coordinates.swift — the same space the AX API itself uses), the same space Strip's own log uses,
+# so this is directly comparable with no coordinate conversion.
+real_window_frame() {
+  osascript -e "tell application \"System Events\" to tell process \"$1\" to get {position of window 1, size of window 1}" 2>/dev/null \
+    | tr -d ','
+}

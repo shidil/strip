@@ -13,6 +13,34 @@ _fail_dump() { # $1=block — print the block for a failing scenario
   sed 's/^/      /' <<<"$1" >&2
 }
 
+_abs_diff() { local d=$(( $1 - $2 )); echo "${d#-}"; }
+
+# _assert_real_frame <appName> <expected: "x y w h"> [timeout_seconds] — polls the REAL, live AX
+# frame of appName's window (real_window_frame, driver.sh) until it matches <expected> within a
+# small pixel tolerance, or times out. Strip's log (parse_frame_for_literal_app) only proves what
+# Strip *decided* the frame should be, the instant it decided it — WindowAnimator's spring
+# (Animation/Spring.swift) can take a moment to actually settle the real window there, so this polls
+# rather than comparing once (which would race the animation, not catch a real bug).
+_assert_real_frame() {
+  local app="$1" expected="$2" timeout="${3:-3}" iterations tol=2
+  iterations=$(( timeout * 10 ))
+  local ex ey ew eh ax ay aw ah
+  read -r ex ey ew eh <<<"$expected"
+  for ((i = 0; i < iterations; i++)); do
+    read -r ax ay aw ah <<<"$(real_window_frame "$app")"
+    if [ -n "$ax" ] \
+      && [ "$(_abs_diff "$ax" "$ex")" -le "$tol" ] \
+      && [ "$(_abs_diff "$ay" "$ey")" -le "$tol" ] \
+      && [ "$(_abs_diff "$aw" "$ew")" -le "$tol" ] \
+      && [ "$(_abs_diff "$ah" "$eh")" -le "$tol" ]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "    ✗ $app: real window frame (${ax:-?},${ay:-?} ${aw:-?}x${ah:-?}) never matched Strip's logged frame ($ex,$ey ${ew}x${eh}) within ${timeout}s" >&2
+  return 1
+}
+
 scenario_layout_switch() {
   local ok=0 cp block
   cp=$(checkpoint); send_hotkey cols1; block=$(wait_for_new_apply "$cp" 3) || { _fail_dump ""; return 1; }
@@ -27,6 +55,15 @@ scenario_layout_switch() {
   assert_eq "$(parse_cols "$block")" "3" "cols3 -> cols" || { ok=1; _fail_dump "$block"; }
   assert_eq "$(parse_count "$block" slotted)" "3" "cols3 -> slotted" || { ok=1; _fail_dump "$block"; }
   assert_eq "$(parse_count "$block" parked)" "0" "cols3 -> parked" || { ok=1; _fail_dump "$block"; }
+
+  # Cross-check against the real world, not just Strip's own account of it: the assertions above only
+  # prove Strip *decided* on these frames, which can't catch a WindowAnimator/AX-write bug where the
+  # real window never actually got there (see TESTING.md's "trusting Strip's own log" discussion).
+  local app expected
+  for app in "${FIXTURE_APPS[@]}"; do
+    expected=$(parse_frame_for_literal_app "$block" "$app") || { ok=1; echo "    ✗ $app: no frame in log block" >&2; continue; }
+    _assert_real_frame "$app" "$expected" 3 || ok=1
+  done
   return "$ok"
 }
 
