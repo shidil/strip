@@ -275,6 +275,27 @@ public final class WindowAnimator: NSObject {
     /// back on while motion is settled (no tick would otherwise fire to place it).
     public func reemitFocusFrame() { emitFocusFrame() }
 
+    /// Adopt the app's *achieved* frame as this window's resting state — called by the controller
+    /// when the settle read-back reveals the app clamped our commanded frame (`onFrameClamped`).
+    /// Retargets the entry and seeds its spring at `frame` so the next tick doesn't re-fight the
+    /// app, records it as `lastWritten` so the settle branch's already-delivered skip holds, and
+    /// re-emits the focus frame if this is the focused window — the ring then hugs reality even in
+    /// the unsatisfiable-overlap case. Runs on the main thread (the `onFrameClamped` dispatch
+    /// already hops there); a window dropped between settle and callback is a no-op.
+    public func acceptReality(id: CGWindowID, frame: CGRect) {
+        guard var e = entries[id] else { return }
+        e.target = frame
+        e.spring = RectSpring(frame)
+        entries[id] = e
+        lastWritten[id] = frame
+        if id == focusedID { emitFocusFrame() }
+    }
+
+    /// The frame this window is currently being driven toward (nil if not animated). Lets the
+    /// controller's delayed clamp-confirm check detect that a newer apply retargeted the window in
+    /// the meantime — in which case the stale clamp teaches nothing.
+    public func currentTarget(_ id: CGWindowID) -> CGRect? { entries[id]?.target }
+
     /// Report the focused window's current animated frame (or its target once settled) to `onFocusFrame`.
     private func emitFocusFrame() {
         guard let id = focusedID, let e = entries[id] else { onFocusFrame?(nil); return }

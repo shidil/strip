@@ -93,11 +93,24 @@ public struct StripLayout {
     // MARK: - placements()
 
     /// Target placement for every window in the ring, within `vis` (Quartz coordinates).
-    public func placements(in vis: CGRect) -> [WindowPlacement] {
+    /// `constraints` carries each window's learned real-size bounds (see `SizeConstraint`); slots
+    /// are sized around the bounds of the window they'll hold, so the layout stops commanding
+    /// frames the app will silently clamp. The empty default is exactly the unconstrained layout.
+    public func placements(in vis: CGRect,
+                           constraints: [CGWindowID: SizeConstraint] = [:]) -> [WindowPlacement] {
         let r = resolve()
+        // Constraints attach to windows; slot sizing needs them per-slot — map through the
+        // resolved slot→window assignment.
+        var requirements: [Slot: SizeConstraint] = [:]
+        if !constraints.isEmpty {
+            for (slot, id) in r.assign {
+                if let c = constraints[id] { requirements[slot] = c }
+            }
+        }
         // geom() uses the raw state.focusSlot (prototype line 166); sizing comes from state.config.
         let rects = SlotGeometry.rects(cols: state.cols, emphasis: state.emphasis,
-                                       focusSlot: state.focusSlot, in: vis, config: state.config)
+                                       focusSlot: state.focusSlot, in: vis, config: state.config,
+                                       requirements: requirements)
         let centerY = SlotGeometry.centerY(in: vis)
 
         return state.ring.map { id in
@@ -119,7 +132,8 @@ public struct StripLayout {
                     inSlot = r.unpinnedSlots[t]
                 } else {
                     parked = true
-                    frame = parkedFrame(t: t, resolved: r, rects: rects, vis: vis, centerY: centerY)
+                    frame = parkedFrame(t: t, resolved: r, rects: rects, vis: vis, centerY: centerY,
+                                        constraint: constraints[id])
                 }
             }
 
@@ -129,13 +143,16 @@ public struct StripLayout {
     }
 
     /// A parked window is pushed entirely off the nearest edge so it can later slide back in.
-    /// Sized like the end slot it parks behind (prototype parks behind the first/last slot).
+    /// Sized like the end slot it parks behind (prototype parks behind the first/last slot), then
+    /// clamped to the window's own learned bounds — a fixed-size window parks at its real size, so
+    /// its off-screen position accounts for the width it will actually have.
     private func parkedFrame(t: Int, resolved r: Resolved, rects: [Slot: CGRect],
-                             vis: CGRect, centerY: CGFloat) -> CGRect {
+                             vis: CGRect, centerY: CGFloat, constraint: SizeConstraint?) -> CGRect {
         let dir: CGFloat = t < 0 ? -1 : 1
         let endSlot = t < 0 ? r.unpinnedSlots.first : r.unpinnedSlots.last
-        let size = endSlot.flatMap { rects[$0] }?.size
+        var size = endSlot.flatMap { rects[$0] }?.size
             ?? CGSize(width: vis.width * 0.2, height: vis.height * 0.6)
+        if let c = constraint { size = c.clamped(size) }
         let x = dir < 0 ? vis.minX - size.width - Self.parkGap : vis.maxX + Self.parkGap
         return CGRect(x: x, y: centerY - size.height / 2, width: size.width, height: size.height)
     }

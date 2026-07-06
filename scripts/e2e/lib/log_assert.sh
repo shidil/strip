@@ -91,6 +91,28 @@ wait_for_slotted_count() {
   return 1
 }
 
+# wait_for_cols <target> <since_line> [timeout_seconds]
+# Polls until the latest apply block since <since_line> reports the target column count, and prints
+# that block. Needed (instead of taking the FIRST new apply) by scenarios that switch layouts:
+# constraint learning (SizeConstraint / reconcileClampedFrame) re-applies asynchronously ~0.3–1s
+# after any layout whose commanded sizes clamp, so a re-apply of the *previous* layout can land
+# between this scenario's checkpoint and its own action's apply. Filtering by the expected cols
+# skips those strays (they carry the previous layout's cols) while still timing out — the real
+# failure — if the switch never happens.
+wait_for_cols() {
+  local target="$1" since="$2" timeout="${3:-3}" iterations block
+  iterations=$(( timeout * 10 ))
+  for ((i = 0; i < iterations; i++)); do
+    if block=$(_latest_apply_block_since "$since") && [ "$(parse_cols "$block")" == "$target" ]; then
+      printf '%s\n' "$block"
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "TIMEOUT: never saw a ${target}-col apply after line $since within ${timeout}s (log=$STRIP_E2E_LOG)" >&2
+  return 1
+}
+
 # wait_for_total_count <target> <since_line> [timeout_seconds]
 # Polls until slotted+parked == <target> — i.e. Strip is managing *exactly* that many windows, no
 # more. Used as the fixture suite's "clean desktop" gate: if other real app windows are open, Strip
@@ -198,6 +220,20 @@ parse_clamp_actual_for_app() {
         return 0
       fi
     fi
+    sleep 0.1
+  done
+  return 1
+}
+
+# log_has_since <since_line> <literal> [timeout_seconds] — polls until a line containing the literal
+# string appears after <since_line>. Status-only (0 found / 1 timeout). Used to detect Strip's
+# "constraint-learned:" lines (StripController.reconcileClampedFrame), which land moments after the
+# frame-clamped line they accompany — same Log serial queue, but a separate async hop.
+log_has_since() {
+  local since="$1" needle="$2" timeout="${3:-2}" iterations
+  iterations=$(( timeout * 10 ))
+  for ((i = 0; i < iterations; i++)); do
+    tail -n "+$((since + 1))" "$STRIP_E2E_LOG" 2>/dev/null | grep -qF "$needle" && return 0
     sleep 0.1
   done
   return 1

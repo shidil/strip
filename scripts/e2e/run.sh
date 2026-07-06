@@ -21,6 +21,11 @@ source "$E2E_DIR/lib/driver.sh"
 source "$E2E_DIR/scenarios.sh"
 
 SCENARIOS=(
+  # constraint_learning runs FIRST deliberately: it converges every fixture window's learned size
+  # bounds (SizeConstraint), so the later scenarios run in steady state — no more clamp-triggered
+  # learning re-applies landing between a scenario's checkpoint and its own action's apply block
+  # (wait_for_new_apply assumes the next new block is the driven action's).
+  scenario_constraint_learning
   scenario_layout_switch
   scenario_slide
   scenario_focus_move

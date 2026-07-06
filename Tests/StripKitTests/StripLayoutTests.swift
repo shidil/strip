@@ -211,4 +211,114 @@ final class StripLayoutTests: XCTestCase {
         XCTAssertEqual(slotted.count, 3, "3-up shows exactly 3 windows")
         XCTAssertEqual(Set(slotted.compactMap { $0.slot }), [.L, .C, .R])
     }
+
+    // MARK: - Size constraints (learned real-window bounds feed slot sizing; see SizeConstraint)
+
+    /// 3-up focus on 1440: window area = 1440 − 2·8 (pad) − 2·8 (gaps) = 1408; C = 704, L = R = 352.
+    private func threeUp(centerId: CGWindowID = 3, emphasis: Emphasis = .focus) -> StripState {
+        StripState(ring: ring, centerId: centerId, cols: 3, emphasis: emphasis,
+                   config: .default)
+    }
+    private func slotFrames(_ p: [WindowPlacement]) -> [Slot: CGRect] {
+        p.reduce(into: [:]) { acc, w in if let s = w.slot { acc[s] = w.frame } }
+    }
+
+    /// A learned floor raises its slot to the floor; the deficit comes out of the free slots
+    /// proportionally, and the row still exactly fills the usable width.
+    func testMinWidthRaisesSlotAndShrinksNeighborsProportionally() {
+        let p = StripLayout(threeUp()).placements(in: stageVis,
+                                                  constraints: [2: SizeConstraint(minWidth: 600)])
+        let f = slotFrames(p)
+        XCTAssertEqual(f[.L]!.width, 600, accuracy: 0.5, "slot raised to window 2's floor")
+        XCTAssertEqual(f[.C]!.width / f[.R]!.width, 2.0, accuracy: 0.01,
+                       "free slots keep their focus-ratio proportion (C was 2× R)")
+        XCTAssertEqual(f[.L]!.minX, stageVis.minX + 8, accuracy: 0.5, "row still starts at padding")
+        XCTAssertEqual(f[.R]!.maxX, stageVis.maxX - 8, accuracy: 0.5, "row still ends at padding")
+    }
+
+    /// A learned ceiling shrinks its slot to the ceiling and the neighbors absorb the surplus.
+    func testMaxWidthYieldsSurplusToNeighbors() {
+        let p = StripLayout(threeUp()).placements(in: stageVis,
+                                                  constraints: [3: SizeConstraint(maxWidth: 400)])
+        let f = slotFrames(p)
+        XCTAssertEqual(f[.C]!.width, 400, accuracy: 0.5, "center capped at window 3's ceiling")
+        XCTAssertEqual(f[.L]!.width, 504, accuracy: 0.5, "neighbors split the 304px surplus")
+        XCTAssertEqual(f[.R]!.width, 504, accuracy: 0.5)
+        XCTAssertEqual(f[.R]!.maxX, stageVis.maxX - 8, accuracy: 0.5, "row still fills the width")
+    }
+
+    /// Two constrained slots + one free: the free slot absorbs the whole difference.
+    func testTwoConstrainedSlotsOneFree() {
+        let p = StripLayout(threeUp()).placements(
+            in: stageVis,
+            constraints: [2: SizeConstraint(minWidth: 500), 4: SizeConstraint(minWidth: 500)])
+        let f = slotFrames(p)
+        XCTAssertEqual(f[.L]!.width, 500, accuracy: 0.5)
+        XCTAssertEqual(f[.R]!.width, 500, accuracy: 0.5)
+        XCTAssertEqual(f[.C]!.width, 1408 - 1000, accuracy: 0.5, "free center absorbs the deficit")
+    }
+
+    /// Floors that can't fit are emitted verbatim (commanded = achievable) and the centered row
+    /// spills off both display edges — the honest last resort; nothing lies about sizes.
+    func testUnsatisfiableFloorsAreEmittedVerbatimAndSpill() {
+        let small = CGRect(x: 0, y: 0, width: 800, height: 600) // window area 768
+        let p = StripLayout(threeUp(emphasis: .equal)).placements(
+            in: small,
+            constraints: [2: SizeConstraint(minWidth: 600), 4: SizeConstraint(minWidth: 600)])
+        let f = slotFrames(p)
+        XCTAssertEqual(f[.L]!.width, 600, accuracy: 0.5, "floor emitted, not silently shrunk")
+        XCTAssertEqual(f[.R]!.width, 600, accuracy: 0.5)
+        XCTAssertLessThan(f[.L]!.minX, small.minX, "row spills off the left edge")
+        XCTAssertGreaterThan(f[.R]!.maxX, small.maxX, "…and the right edge")
+        XCTAssertTrue(StripController.spillsOffDisplay(Array(f.values), vis: small),
+                      "the controller's unsatisfiable detector fires on exactly this layout")
+    }
+
+    /// A height ceiling shrinks only that slot's height, re-centered on the strip's vertical center.
+    func testHeightCeilingRecentersItsSlotOnly() {
+        let p = StripLayout(threeUp()).placements(in: stageVis,
+                                                  constraints: [3: SizeConstraint(maxHeight: 500)])
+        let f = slotFrames(p)
+        XCTAssertEqual(f[.C]!.height, 500, accuracy: 0.5)
+        XCTAssertEqual(f[.C]!.midY, stageVis.midY, accuracy: 0.5, "still vertically centered")
+        XCTAssertEqual(f[.L]!.height, stageVis.height - 16, accuracy: 0.5, "neighbors keep full height")
+    }
+
+    /// Monocle honors the centered window's ceiling (a fixed-size window gets a slot its own size).
+    func testMonocleHonorsCeiling() {
+        let s = StripState(ring: ring, centerId: 5, cols: 1, config: .default)
+        let c = StripLayout(s).placements(in: stageVis,
+                                          constraints: [5: SizeConstraint(maxWidth: 715, maxHeight: 652)])
+            .first { $0.id == 5 }!
+        XCTAssertEqual(c.frame.width, 715, accuracy: 0.5)
+        XCTAssertEqual(c.frame.height, 652, accuracy: 0.5)
+        XCTAssertEqual(c.frame.midX, stageVis.midX, accuracy: 0.5, "still centered")
+    }
+
+    /// A parked window's frame uses its own bounds — a fixed-size window parks at its real size,
+    /// still fully off-screen.
+    func testParkedWindowParksAtItsOwnSize() {
+        let s = threeUp(centerId: 1) // window 5 is ring-distance −3 from center → parks off the left
+        let p = StripLayout(s).placements(in: stageVis,
+                                          constraints: [5: SizeConstraint(maxWidth: 300, maxHeight: 400)])
+        let parked5 = p.first { $0.id == 5 }!
+        XCTAssertTrue(parked5.parked)
+        XCTAssertEqual(parked5.frame.width, 300, accuracy: 0.5)
+        XCTAssertEqual(parked5.frame.height, 400, accuracy: 0.5)
+        let offLeft = parked5.frame.maxX <= stageVis.minX
+        let offRight = parked5.frame.minX >= stageVis.maxX
+        XCTAssertTrue(offLeft || offRight, "still fully off-screen at its own size")
+    }
+
+    /// Constraints on parked windows must not disturb the slotted layout, and the empty default
+    /// reproduces the unconstrained layout exactly (the regression pin for every existing caller).
+    func testConstraintsOnParkedWindowsDontDisturbSlots() {
+        let s = threeUp()
+        let unconstrained = StripLayout(s).placements(in: stageVis)
+        let constrained = StripLayout(s).placements(in: stageVis,
+                                                    constraints: [6: SizeConstraint(minWidth: 700)])
+        for (a, b) in zip(unconstrained.filter { !$0.parked }, constrained.filter { !$0.parked }) {
+            XCTAssertEqual(a.frame, b.frame, "slotted frames identical — window 6 isn't slotted")
+        }
+    }
 }

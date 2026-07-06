@@ -8,6 +8,11 @@ public final class StripController {
     private let animator = WindowAnimator()
     public private(set) var state: StripState
     private var windowsById: [CGWindowID: ManagedWindow] = [:]
+    /// Learned per-window real-size bounds (see `SizeConstraint`), fed into every layout so slots
+    /// are sized around what each window can actually be. Keyed like `windowsById` and pruned with
+    /// it — a constraint dies with its window; nothing is persisted (a relaunched app can behave
+    /// differently, and re-learning costs one clamp round-trip).
+    private var constraints: [CGWindowID: SizeConstraint] = [:]
     private var screen: NSScreen
     /// The window we last handed keyboard focus to — so `apply()` only re-focuses on a real change.
     private var lastFocusedId: CGWindowID?
@@ -224,6 +229,7 @@ public final class StripController {
 
         windowsById = [:]
         for id in state.ring { windowsById[id] = allById[id] }
+        constraints = constraints.filter { windowsById[$0.key] != nil }
         normalize()
     }
 
@@ -443,8 +449,16 @@ public final class StripController {
         // Nested interval: isolates pure layout-recompute time within the command path. Measured at
         // the call site so the engine (StripLayout) stays os-free and trivially unit-testable.
         let placementsState = sp.beginInterval("placements")
-        let placements = layout.placements(in: vis)
+        let placements = layout.placements(in: vis, constraints: constraints)
         sp.endInterval("placements", placementsState)
+
+        // Learned floors can exceed the usable width — physically unsatisfiable; the solver then
+        // emits the floors verbatim and the (centered) row spills off the display edges — the
+        // honest last resort, better than silently commanding frames the apps won't take. Surface
+        // it. (Auto-dropping `cols` instead is a semantic decision deferred to the backlog.)
+        if !constraints.isEmpty, Self.spillsOffDisplay(placements.filter { !$0.parked }.map(\.frame), vis: vis) {
+            Log.line("constraint-unsatisfiable: learned minimum sizes exceed the usable width in \(state.cols)-up — slotted windows spill off the display")
+        }
 
         // `current` is the window's live frame (read during the last `refresh()`), passed so the
         // animator can seed a new window's spring without its own synchronous AX read (perf: animate
@@ -666,6 +680,7 @@ public final class StripController {
         let old = state
         state.ring.removeAll { $0 == id }
         windowsById[id] = nil
+        constraints[id] = nil
         state.pins = state.pins.filter { $0.value != id }
         if state.centerId == id {
             state.centerId = Self.neighborOfClosedCenter(in: old, survivors: Set(state.ring))
@@ -677,18 +692,76 @@ public final class StripController {
     }
 
     /// The animator reports when a window's real, settled AX frame doesn't match what we commanded —
-    /// an app can silently clamp a resize to its own minimum content size, a harder constraint than
-    /// the OS-level clamping `AXWindow.setFrame`'s double-`setSize` idiom defeats (BUGS.md "min-size
-    /// clamp"). Reconcile the cached frame to reality and log the discovery. Deliberately does NOT
-    /// re-`apply()`: `SlotGeometry` has no minimum-size awareness, so a re-layout would recompute the
-    /// same impossible target and clamp again next settle — an infinite loop.
+    /// an app can silently clamp a resize to its own minimum (Console) or maximum/fixed (Settings)
+    /// content size, a harder constraint than the OS-level clamping `AXWindow.setFrame`'s
+    /// double-`setSize` idiom defeats (BUGS.md "min-size clamp"). Reconcile the cached frame AND the
+    /// animator's resting state to reality (`acceptReality` — the focus ring then hugs the real
+    /// window and the next tick doesn't re-fight the app), then LEARN: a clamp that meaningfully
+    /// moves the window's size bounds (`SizeConstraint.learned`, ≥8px, per-dimension, monotonic)
+    /// updates its constraint and re-applies once — the re-layout targets sizes inside the learned
+    /// bounds, so no fresh clamp fires. The old infinite-loop fear applied to re-applying *without*
+    /// feeding the bounds back into layout; monotone + bounded + thresholded learning terminates.
+    /// A clamp that teaches nothing (sub-threshold, position-only) keeps today's cache + log.
     private func reconcileClampedFrame(_ id: CGWindowID, requested: CGRect, actual: CGRect) {
         guard var w = windowsById[id] else { return }
+        // The settle read-back is async: a newer apply() can retarget this window between the settle
+        // write and this callback. In that case `requested`/`actual` describe a target we've already
+        // abandoned — accepting the stale clamp here would clobber the new target and visibly roll the
+        // window back. Only reconcile while the animator is still driving toward `requested`; the new
+        // motion's own settle read-back will judge its target. (confirmAndLearnClamp does the same
+        // check, but against the post-reconcile target — the visible rollback would already be done.)
+        guard let target = animator.currentTarget(id),
+              WindowAnimator.frameMatches(target, requested) else { return }
         w.frame = actual
         windowsById[id] = w
+        animator.acceptReality(id: id, frame: actual)
         Log.line(String(format: "frame-clamped: %@ requested=(%.0f,%.0f %.0fx%.0f) actual=(%.0f,%.0f %.0fx%.0f)",
                         w.appName, requested.origin.x, requested.origin.y, requested.width, requested.height,
                         actual.origin.x, actual.origin.y, actual.width, actual.height))
+        // Learn only after the mismatch survives a confirm delay: a slow app (or a loaded VM) can
+        // still be applying the resize when the settle read-back fires, so `actual` may be a
+        // transient mid-flight/overshoot frame. Constraints are monotone by design — a floor learned
+        // from a transient never self-corrects — so a bogus one must be kept out, not repaired.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.clampLearnConfirmDelay) { [weak self] in
+            self?.confirmAndLearnClamp(id, requested: requested, acceptedActual: actual)
+        }
+    }
+
+    /// How long a clamp must persist before it teaches a constraint. Long enough for a laggy app to
+    /// finish applying a resize it actually accepts; short enough that the learning re-apply still
+    /// feels immediate. One delayed check per clamp event — nowhere near any hot path.
+    private static let clampLearnConfirmDelay: TimeInterval = 0.35
+
+    /// The delayed half of `reconcileClampedFrame`: re-read the live frame and learn only if the
+    /// clamp is still standing. Skips learning when a newer apply retargeted the window in the
+    /// meantime (the stale requested/actual pair proves nothing about the new target — the new
+    /// motion's own settle read-back will judge it), and un-does the reconcile pessimism when the
+    /// app merely caught up late (live now matches what we asked for).
+    private func confirmAndLearnClamp(_ id: CGWindowID, requested: CGRect, acceptedActual: CGRect) {
+        guard var w = windowsById[id], let live = w.ax.frame else { return }
+        guard let target = animator.currentTarget(id),
+              WindowAnimator.frameMatches(target, acceptedActual) else { return } // retargeted since
+        w.frame = live
+        windowsById[id] = w
+        if WindowAnimator.frameMatches(live, requested) {
+            animator.acceptReality(id: id, frame: live) // transient clamp — the app caught up
+            return
+        }
+        if let learned = SizeConstraint.learned(from: constraints[id], requested: requested.size,
+                                                actual: live.size,
+                                                bounds: screen.quartzVisibleFrame.size) {
+            constraints[id] = learned
+            func f(_ v: CGFloat?) -> String { v.map { String(format: "%.0f", $0) } ?? "-" }
+            Log.line("constraint-learned: \(w.appName) min=\(f(learned.minWidth))x\(f(learned.minHeight)) max=\(f(learned.maxWidth))x\(f(learned.maxHeight))")
+            scheduleApply()
+        }
+    }
+
+    /// Whether any slotted frame sticks out past the visible frame horizontally — the detector for
+    /// unsatisfiable constraint floors (`SlotGeometry.solveWidths` emits floors verbatim when they
+    /// can't fit, and the centered row then spills off the display edges). Pure → unit-testable.
+    static func spillsOffDisplay(_ frames: [CGRect], vis: CGRect) -> Bool {
+        frames.contains { $0.minX < vis.minX - 0.5 || $0.maxX > vis.maxX + 0.5 }
     }
 
     /// Find every managed window whose center sits outside `vis` (parked off-screen) and write it

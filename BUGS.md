@@ -5,27 +5,6 @@
 - Quit and reopen rearranges the order of windows.
   Ideally, the order of windows should be preserved similar to Re-tile.
 
-- macOS native apps' real window size disagrees with Strip's layout: Console, Music, Photos
-  end up *wider* than their slot (their AppKit `contentMinSize` — e.g. Console 600px — exceeds
-  the commanded slot width, so the resize silently clamps and the window spills under its
-  neighbor), while System Settings ends up *smaller* (its window is fixed-size/non-resizable,
-  so it never grows to fill the slot). Observed 2026-07-02 (screenshot: Console's real window
-  extends past the focus ring and overlaps the next slot; ring drawn at the commanded frame,
-  not reality).
-  This is the known, deliberately-deferred follow-up to the fixed "min-size clamp" bug below:
-  the settle read-back (`WindowAnimator.onFrameClamped` → `StripController.reconcileClampedFrame`)
-  detects the drift and updates the cached `ManagedWindow.frame`, but by design does not
-  re-`apply()` — `SlotGeometry` has no minimum-size awareness, so a re-layout would recompute
-  the same impossible target (infinite clamp loop). Two visible consequences:
-  (a) layout overlap/underfill — slots aren't sized around a window's learned real
-  minimum/fixed size, so neighbors overlap (min-clamped) or leave gaps (fixed-size smaller);
-  (b) the focus ring lies — `WindowAnimator.emitFocusFrame` emits the spring target/current
-  (the commanded frame), never the reconciled actual frame, so the ring outlines a rectangle
-  the window doesn't occupy.
-  Fix shape: feed learned per-window minimum/fixed sizes back into layout (SlotGeometry
-  min-width awareness — e.g. widen the clamped window's slot and shrink/park others, niri-style),
-  and make the focus ring track the reconciled real frame after settle.
-
 - When the last managed window exits, Strip's overlay chrome goes stale instead of clearing:
   the focus ring stays drawn over empty wallpaper (at the dead window's last frame) and the
   film rail keeps showing chips for windows that no longer exist. Observed 2026-07-02
@@ -43,6 +22,37 @@
   overlay entirely) — before skipping the placement/animation work.
 
 ## Fixed
+
+- macOS native apps' real window size disagrees with Strip's layout: Console, Music, Photos
+  end up *wider* than their slot (their AppKit `contentMinSize` — e.g. Console 600px — exceeds
+  the commanded slot width, so the resize silently clamps and the window spills under its
+  neighbor), while System Settings ends up *smaller* (its window is effectively fixed-size,
+  so it never grows to fill the slot). Observed 2026-07-02 (screenshot: Console's real window
+  extends past the focus ring and overlaps the next slot; ring drawn at the commanded frame).
+  Fixed 2026-07-02 by closing the loop the "min-size clamp" fix below deliberately left open —
+  layout now *learns* each window's real size bounds from clamp events and sizes slots around
+  them:
+  - `SizeConstraint` (Model/): per-window, per-dimension learned floor/ceiling. A settle
+    read-back that comes back larger than requested raises the floor (Console); smaller lowers
+    the ceiling (Settings — "fixed-size" emerges as floor ≈ ceiling). Monotone (floors only
+    rise, ceilings only fall), thresholded (≥8px, so terminal cell-quantization noise teaches
+    nothing), floors capped at the screen — which is why re-applying is now safe: the loop
+    terminates, no infinite clamp cycle. NOTE: detecting fixed windows upfront via
+    `AXWindow.isResizable == false` was verified to be a dead end — such windows are classified
+    `.floating` and never managed, and Settings reports its size *settable* and clamps anyway.
+  - `SlotGeometry.rects`/`solveWidths` take per-slot requirements: a slot below its window's
+    floor is raised, one above its ceiling shrunk, the difference redistributed proportionally
+    among slots still free to move; heights clamp per-slot (re-centered). Floors that can't fit
+    are emitted verbatim — the centered row spills off the display edges (honest last resort,
+    logged `constraint-unsatisfiable`; auto-dropping `cols` is a deferred backlog decision).
+  - `StripController.reconcileClampedFrame` learns (`constraint-learned:` log line) and
+    re-applies once per genuinely-new bound; `WindowAnimator.acceptReality` adopts the achieved
+    frame as the entry's target/spring/lastWritten so the next tick doesn't re-fight the app and
+    **the focus ring hugs the real window frame**, even when unsatisfiable.
+  Covered by `SizeConstraintTests` + `StripLayoutTests` constraint cases (pure), and
+  `scenario_constraint_learning` / `_assert_real_frame`'s upgraded contract (e2e): after a
+  `constraint-learned` line the real frame must *converge* to the re-apply's commanded frame,
+  and repeating the layout must learn nothing new.
 
 - Strip doesn't detect when a commanded window frame is silently clamped by the target app's own
   minimum window size, so its internal model (and log) can permanently disagree with the real screen.

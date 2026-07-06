@@ -370,6 +370,15 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
   on the ring-swap primitive `StripState.moveFocused` below.
 
 **Navigation / commands:**
+- **Auto-demote `cols` when learned size floors don't fit** (M, semantic decision) — the size-constraint
+  work (2026-07-02, see BUGS.md Fixed "real window size disagrees") sizes slots around each window's
+  learned `SizeConstraint` floors/ceilings; when the floors alone exceed the usable width the solver
+  emits them verbatim and the row spills off the display edges (logged `constraint-unsatisfiable`) —
+  the honest last resort. The alternative — automatically dropping to fewer columns (niri-style
+  "park what doesn't fit") — changes layout semantics the user didn't ask for, so it was deliberately
+  left out. If spill turns out to be common in daily use, revisit: `StripController.apply()` already
+  detects the condition (`spillsOffDisplay`), so demotion would be a targeted `state.cols` adjustment
+  gated on it.
 - **Window search (overview / spotlight style)** (M) — filter `RailItem.title`/`appName` → `setCenter(id)`;
   a search field inside overview or its own panel.
 - ~~**Swap focused ↔ neighbor** (S)~~ — ✅ shipped 2026-07-01: `StripState.moveFocused(_:)` (pure,
@@ -395,7 +404,8 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
 
 ## Open bugs
 
-See `BUGS.md`. Current: (1) quit→reopen rearranges window order (should preserve, like Re-tile).
+See `BUGS.md`. Current: (1) quit→reopen rearranges window order (should preserve, like Re-tile);
+(2) stale overlay (focus ring + rail chips) when the last managed window exits.
 (Fixed 2026-06-30: minimize/hide-on-close gap — reconcile now drops windows the window server no
 longer shows on screen, so the strip closes up.)
 

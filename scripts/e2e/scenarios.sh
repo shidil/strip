@@ -48,10 +48,14 @@ _frames_match() {
 # can take a moment to actually settle the real window there, so this polls rather than comparing
 # once (which would race the animation, not catch a real bug).
 #
-# If the real frame never matches <expected>, that's only a pass if Strip itself detected the drift
-# and honestly recorded it (StripController.reconcileClampedFrame, a "frame-clamped:" log line) with
-# the *correct* actual frame — not just any frame-clamped line. "Never detected" and "detected but
-# recorded the wrong value" are different bugs and get different failure messages.
+# If the real frame never matches <expected>, the app clamped our resize (its own min/fixed content
+# size). Strip must have detected that (a "frame-clamped:" line, StripController.reconcileClampedFrame)
+# — and when the clamp taught it a size constraint (a "constraint-learned:" line, SizeConstraint), it
+# re-applies with slots sized around the learned bounds, so the contract escalates from "honestly
+# record the drift" to CONVERGENCE: the latest apply's commanded frame for this app must come to
+# match the live real frame. Only a clamp that taught nothing (sub-threshold drift) may settle for
+# the honest record. "Never detected", "recorded the wrong value", and "learned but never converged"
+# are different bugs and get different failure messages.
 _assert_real_frame() {
   local app="$1" expected="$2" since="$3" timeout="${4:-3}" iterations
   iterations=$(( timeout * 10 ))
@@ -63,6 +67,22 @@ _assert_real_frame() {
   done
   local clamp_actual
   if clamp_actual=$(parse_clamp_actual_for_app "$since" "$app" 2); then
+    if log_has_since "$since" "constraint-learned: $app " 2; then
+      # Learning fired → a re-apply is coming (possibly several, if one window's raised floor
+      # re-flows a neighbor into its own floor). Poll the LATEST apply block each round rather than
+      # waiting for one specific block, so cascades converge too.
+      local block2 expected2=""
+      for ((i = 0; i < 50; i++)); do
+        if block2=$(_latest_apply_block_since "$since") \
+           && expected2=$(parse_frame_for_literal_app "$block2" "$app"); then
+          live=$(real_window_frame "$app")
+          [ -n "$live" ] && _frames_match "$live" "$expected2" && return 0
+        fi
+        sleep 0.1
+      done
+      echo "    ✗ $app: learned a size constraint but never converged — latest commanded (${expected2:-?}) vs live real frame ($live)" >&2
+      return 1
+    fi
     if _frames_match "$clamp_actual" "$live"; then
       return 0
     fi
@@ -74,17 +94,16 @@ _assert_real_frame() {
 }
 
 scenario_layout_switch() {
+  # wait_for_cols (not wait_for_new_apply): a constraint-learning re-apply of the previous layout
+  # can land right after the checkpoint and would otherwise be mistaken for this hotkey's apply.
   local ok=0 cp block
-  cp=$(checkpoint); send_hotkey cols1; block=$(wait_for_new_apply "$cp" 3) || { _fail_dump ""; return 1; }
-  assert_eq "$(parse_cols "$block")" "1" "cols1 -> cols" || { ok=1; _fail_dump "$block"; }
+  cp=$(checkpoint); send_hotkey cols1; block=$(wait_for_cols 1 "$cp" 3) || { _fail_dump ""; return 1; }
   assert_eq "$(parse_count "$block" slotted)" "1" "cols1 -> slotted" || { ok=1; _fail_dump "$block"; }
 
-  cp=$(checkpoint); send_hotkey cols2; block=$(wait_for_new_apply "$cp" 3) || { _fail_dump ""; return 1; }
-  assert_eq "$(parse_cols "$block")" "2" "cols2 -> cols" || { ok=1; _fail_dump "$block"; }
+  cp=$(checkpoint); send_hotkey cols2; block=$(wait_for_cols 2 "$cp" 3) || { _fail_dump ""; return 1; }
   assert_eq "$(parse_count "$block" slotted)" "2" "cols2 -> slotted" || { ok=1; _fail_dump "$block"; }
 
-  cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_new_apply "$cp" 3) || { _fail_dump ""; return 1; }
-  assert_eq "$(parse_cols "$block")" "3" "cols3 -> cols" || { ok=1; _fail_dump "$block"; }
+  cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_cols 3 "$cp" 3) || { _fail_dump ""; return 1; }
   assert_eq "$(parse_count "$block" slotted)" "3" "cols3 -> slotted" || { ok=1; _fail_dump "$block"; }
   assert_eq "$(parse_count "$block" parked)" "0" "cols3 -> parked" || { ok=1; _fail_dump "$block"; }
 
@@ -96,6 +115,36 @@ scenario_layout_switch() {
     expected=$(parse_frame_for_literal_app "$block" "$app") || { ok=1; echo "    ✗ $app: no frame in log block" >&2; continue; }
     _assert_real_frame "$app" "$expected" "$cp" 3 || ok=1
   done
+  return "$ok"
+}
+
+# The constraint-learning loop end-to-end (SizeConstraint → reconcileClampedFrame → re-apply): in
+# 3-up on the small VM display the peek slots are far narrower than Console's (~600px) / Activity
+# Monitor's (~740px) real contentMinSize, so Strip must detect each clamp, learn the floor,
+# re-apply, and converge (real frames match the commanded ones). Then the monotonic no-churn
+# guarantee: re-entering the same layout must clamp nothing and learn nothing new.
+scenario_constraint_learning() {
+  local ok=0 cp block app expected
+  cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_cols 3 "$cp" 3) || { _fail_dump ""; return 1; }
+  for app in "${FIXTURE_APPS[@]}"; do
+    expected=$(parse_frame_for_literal_app "$block" "$app") || { ok=1; echo "    ✗ $app: no frame in log block" >&2; continue; }
+    _assert_real_frame "$app" "$expected" "$cp" 3 || ok=1
+  done
+
+  # Snapshot how much has been learned, bounce the layout, and come back: same slots, now solved
+  # with the learned floors → commanded ≥ every floor → no clamp, no new learning.
+  local before after
+  before=$(grep -cF "constraint-learned:" "$STRIP_E2E_LOG" || true)
+  cp=$(checkpoint); send_hotkey cols1; wait_for_cols 1 "$cp" 3 >/dev/null || { _fail_dump ""; return 1; }
+  cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_cols 3 "$cp" 3) || { _fail_dump ""; return 1; }
+  for app in "${FIXTURE_APPS[@]}"; do
+    expected=$(parse_frame_for_literal_app "$block" "$app") || { ok=1; continue; }
+    _assert_real_frame "$app" "$expected" "$cp" 3 || { ok=1; echo "    ✗ $app: did not stay converged on repeat cols3" >&2; }
+  done
+  # Give a would-be stray settle read-back a beat to log before counting.
+  sleep 1
+  after=$(grep -cF "constraint-learned:" "$STRIP_E2E_LOG" || true)
+  assert_eq "$after" "$before" "repeat cols3 -> no new constraint-learned lines (monotone, no churn)" || ok=1
   return "$ok"
 }
 
@@ -230,15 +279,12 @@ scenario_overview() {
 }
 
 scenario_layout_submenu() {
+  # wait_for_cols (not wait_for_new_apply): a constraint-learning re-apply of the previous layout
+  # can land right after the checkpoint and would otherwise be mistaken for this click's apply.
   local ok=0 cp block
-  cp=$(checkpoint); click_submenu "Layout" "Monocle (1)"; block=$(wait_for_new_apply "$cp" 3) || return 1
-  assert_eq "$(parse_cols "$block")" "1" "menu Monocle (1) -> cols" || { ok=1; _fail_dump "$block"; }
-
-  cp=$(checkpoint); click_submenu "Layout" "2-up (2)"; block=$(wait_for_new_apply "$cp" 3) || return 1
-  assert_eq "$(parse_cols "$block")" "2" "menu 2-up (2) -> cols" || { ok=1; _fail_dump "$block"; }
-
-  cp=$(checkpoint); click_submenu "Layout" "3-up (3)"; block=$(wait_for_new_apply "$cp" 3) || return 1
-  assert_eq "$(parse_cols "$block")" "3" "menu 3-up (3) -> cols" || { ok=1; _fail_dump "$block"; }
+  cp=$(checkpoint); click_submenu "Layout" "Monocle (1)"; block=$(wait_for_cols 1 "$cp" 3) || { ok=1; echo "    ✗ menu Monocle (1): never reached 1-col" >&2; }
+  cp=$(checkpoint); click_submenu "Layout" "2-up (2)"; block=$(wait_for_cols 2 "$cp" 3) || { ok=1; echo "    ✗ menu 2-up (2): never reached 2-col" >&2; }
+  cp=$(checkpoint); click_submenu "Layout" "3-up (3)"; block=$(wait_for_cols 3 "$cp" 3) || { ok=1; echo "    ✗ menu 3-up (3): never reached 3-col" >&2; }
   return "$ok"
 }
 
