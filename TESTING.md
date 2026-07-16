@@ -54,7 +54,7 @@ accessory app, so its menu is `menu bar 1`, not the usual app's `menu bar 2`).
 found raw `CGEvent` `.mouseMoved` posting unreliable for triggering SwiftUI's `.onHover`. The
 obvious alternative, XCUITest's `XCUIApplication`, was spiked (time-boxed, ~5 minutes to a definitive
 answer) by adding a throwaway test to `Tests/StripKitTests` that called
-`XCUIApplication(bundleIdentifier: "com.spike.strip").activate()`. Result:
+`XCUIApplication(bundleIdentifier: "io.github.shidil.strip").activate()`. Result:
 
 ```
 error: -[StripKitTests.SpikeXCUITestThrowaway testAttachAndHover] : Device is not configured for UI
@@ -177,7 +177,7 @@ there's no log line to assert against — that stays a manual `screencapture` + 
   short settle delay before each scenario; if a scenario fails in the full run but passes in
   isolation (§4), that's almost certainly why — it's a suite timing margin, not a Strip bug.
 - **The sizing knobs (focus ratio, height, gap/padding) persist to `UserDefaults` across launches**
-  (`Model/Settings.swift`, key `strip.settings.v1` under `com.spike.strip`) — a prior interactive
+  (`Model/Settings.swift`, key `strip.settings.v1` under `io.github.shidil.strip`) — a prior interactive
   session or e2e run can leave them anywhere inside their clamped ranges
   (`LayoutConfig.focusRatioRange`/`heightRange`, gap/padding floored at 0 with no upper bound).
   `run.sh` resets that key before every launch so each run starts from the same state, and

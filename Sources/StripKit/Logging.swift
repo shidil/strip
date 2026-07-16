@@ -11,7 +11,7 @@ public enum Log {
     /// per-window `logState` detail loop doesn't churn allocations on the hot path.
     public static let verbose: Bool = ProcessInfo.processInfo.environment["STRIP_VERBOSE"] != nil
 
-    private static let queue = DispatchQueue(label: "com.spike.strip.log")
+    private static let queue = DispatchQueue(label: "io.github.shidil.strip.log")
     private static let handle: FileHandle? = {
         FileManager.default.createFile(atPath: path, contents: nil)
         return FileHandle(forWritingAtPath: path)

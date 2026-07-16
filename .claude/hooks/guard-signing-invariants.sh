@@ -4,7 +4,7 @@
 # Two expensive, hard-to-diagnose footguns from CLAUDE.md:
 #   1. Changing the code-signing identity (SIGN_ID / the "Strip Dev" cert / setup-signing.sh)
 #      resets the Accessibility TCC grant. Recovery is manual: `tccutil reset Accessibility
-#      com.spike.strip`, `make open`, then re-toggle Strip in System Settings -> Privacy &
+#      io.github.shidil.strip`, `make open`, then re-toggle Strip in System Settings -> Privacy &
 #      Security -> Accessibility. Easy to trip without noticing why the app suddenly can't move
 #      windows.
 #   2. Changing `swiftLanguageMode` off v5 reintroduces Swift 6 Sendable friction with the
@@ -29,7 +29,7 @@ case "$file" in
     ;;
   *Makefile | *scripts/setup-signing.sh)
     if printf '%s' "$payload" | grep -Eq 'SIGN_ID|Strip Dev|--sign|codesign'; then
-      reason="This edit touches the code-signing identity. Changing it RESETS the Accessibility (TCC) grant — you'll then need: tccutil reset Accessibility com.spike.strip, make open, and a manual re-toggle in System Settings. Confirm this is intentional."
+      reason="This edit touches the code-signing identity. Changing it RESETS the Accessibility (TCC) grant — you'll then need: tccutil reset Accessibility io.github.shidil.strip, make open, and a manual re-toggle in System Settings. Confirm this is intentional."
     fi
     ;;
 esac

@@ -4,8 +4,8 @@ The toolkit used across the performance campaign to run, test, and measure Strip
 commands and the non-obvious gotchas that make each one actually work. Grouped by purpose.
 
 > Coordinates everything internal is **Quartz global** (top-left origin). Subsystem for all signposts
-> is `com.spike.strip`, category `hotpath`. See also `OPTIMIZATION_PLAN.md` (the in-repo capture of the
-> review + the shipped before/after ledger), `PLAN.md`, `HANDOFF.md`, `CLAUDE.md`.
+> is `io.github.shidil.strip`, category `hotpath`. See also `OPTIMIZATION_PLAN.md` (the in-repo capture of the
+> review + the shipped before/after ledger), `PLAN.md`, `CLAUDE.md`.
 
 > **Provenance — the external "Performance Review & Optimization Plan" artifact is a PRE-campaign
 > snapshot.** It was the planning doc; its Phase 0 premise ("zero `os_signpost` usage exists in
@@ -30,14 +30,14 @@ commands and the non-obvious gotchas that make each one actually work. Grouped b
   observe window placements, focus (`● … ◀focus` marks the centered/focused window), hotkeys, errors.
   **Never delete this sink** — it's the only runtime observability for a trusted launch.
 - **Signing must stay stable** or every rebuild invalidates the AX grant. If the identity changes:
-  `tccutil reset Accessibility com.spike.strip`, `make open`, re-toggle in System Settings → Privacy
+  `tccutil reset Accessibility io.github.shidil.strip`, `make open`, re-toggle in System Settings → Privacy
   & Security → Accessibility.
 
 ---
 
 ## 2. Instrumentation (os_signpost)
 
-`Sources/StripKit/Signpost.swift` wraps an `OSSignposter` (subsystem `com.spike.strip`, category
+`Sources/StripKit/Signpost.swift` wraps an `OSSignposter` (subsystem `io.github.shidil.strip`, category
 `hotpath`). Two shapes:
 
 - **Intervals** (durations) — `beginInterval`/`endInterval`, paired with `defer`:

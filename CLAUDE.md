@@ -8,15 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 concept: windows live on a horizontal film, the focused window stays centered, neighbors flow past
 it. It is **Swift + AppKit, Accessibility-API only, no SIP, no scripting addition**.
 
-**`PLAN.md` is the authoritative project doc** — the source of truth for roadmap, milestone progress
-(M0–M7 done & user-confirmed; M8 workspaces is next), architecture rationale, the verified-seam map,
-and the do-not-relearn gotchas. **`HANDOFF.md` is the active-task brief** — a per-task handoff for an
-agent, replaced wholesale each time a new task starts (not a roadmap). Read both before substantive
-work. Engram has deeper context: `mem_search "strip-wm-spike"`.
+**`PLAN.md` is the authoritative project doc** — the source of truth for roadmap, milestone progress,
+architecture rationale, the verified-seam map, and the do-not-relearn gotchas. Read it before
+substantive work. Engram has deeper context: `mem_search "strip-wm-spike"`.
 
-The `wm-prototype/` directory is the **design spec** (an exported HTML/CSS/JS mockup), not code to
-port. Its `geom()`/`resolve()`/`computeVM()` logic was ported into the Swift layout engine; its
-visuals guide the (not-yet-built) overlay chrome. PLAN.md indexes the relevant prototype line ranges.
+The layout engine originated from an HTML/CSS/JS design prototype whose redistribution provenance
+was unclear, so the export is intentionally not included. Its `geom()`/`resolve()`/`computeVM()`
+concepts were ported into the Swift layout engine and are now documented in source and tests.
 
 ## Commands
 
@@ -40,7 +38,7 @@ Single test: `swift test --filter StripLayoutTests/testRingWrapsAround` (or a wh
   `tail` that to observe behavior (window placements, hotkeys, errors).
 - **Signing must stay stable** or every rebuild invalidates the grant. The "Strip Dev" self-signed
   cert handles this. If you change the signing identity, the grant resets — run
-  `tccutil reset Accessibility com.spike.strip`, `make open`, and re-toggle Strip in System Settings
+  `tccutil reset Accessibility io.github.shidil.strip`, `make open`, and re-toggle Strip in System Settings
   → Privacy & Security → Accessibility. (The cert reports `CSSMERR_TP_NOT_TRUSTED` and is hidden by
   `security find-identity -v`; detect it without `-v`. codesign + TCC accept it regardless.)
 

@@ -57,11 +57,11 @@ fi
 pkill -x Strip 2>/dev/null || true
 sleep 0.3
 # StripController.adjustFocusRatio/adjustHeight/adjustGap persist their knobs to UserDefaults
-# (Model/Settings.swift, "strip.settings.v1" under com.spike.strip) so they survive across launches —
+# (Model/Settings.swift, "strip.settings.v1" under io.github.shidil.strip) so they survive across launches —
 # without this, scenario_focus_ratio/scenario_window_height/scenario_gap_padding from a previous run
 # would leak into this one's starting state. The scenarios themselves are direction-tolerant of
 # wherever they start (see scenarios.sh), but resetting keeps every run's starting point identical.
-defaults delete com.spike.strip strip.settings.v1 2>/dev/null || true
+defaults delete io.github.shidil.strip strip.settings.v1 2>/dev/null || true
 open --env STRIP_VERBOSE=1 --env STRIP_LOG="$STRIP_LOG" "$APP"
 
 for i in $(seq 1 50); do
