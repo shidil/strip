@@ -183,7 +183,7 @@ public final class WindowAnimator: NSObject {
     /// the Enhanced-UI toggles — share it, so they stay ordered and off the main thread.
     private func queue(for pid: pid_t) -> DispatchQueue {
         if let q = queues[pid] { return q }
-        let q = DispatchQueue(label: "com.spike.strip.ax.\(pid)")
+        let q = DispatchQueue(label: "io.github.shidil.strip.ax.\(pid)")
         queues[pid] = q
         return q
     }

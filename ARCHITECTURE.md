@@ -12,7 +12,7 @@ Strip's job is to tile real windows belonging to other applications into a singl
 
 All window movement is performed through the Accessibility API, reading and writing each window's `kAXPosition` and `kAXSize`. Window identity is obtained from one private read-only symbol, `_AXUIElementGetWindow`, which yields a stable `CGWindowID`; that identifier is used only for identity, never to move windows.
 
-The layout mathematics are a Swift port of an HTML/JS prototype's `geom()` / `resolve()` / `computeVM()` functions (the prototype lives in `wm-prototype/` as a design reference). Window motion is animated with per-window springs driven by a display-link loop.
+The layout mathematics originated in HTML/JS `geom()` / `resolve()` / `computeVM()` concepts. The original export is not distributed; the durable implementation is the Swift layout engine and its tests. Window motion is animated with per-window springs driven by a display-link loop.
 
 ---
 
@@ -74,9 +74,8 @@ Defining characteristics:
 | `Sources/StripKit/Overlay/` | On-top chrome: AppKit `NSPanel` hosting SwiftUI | Film rail, status pill, help overlay, overview grid, focus ring, thumbnails. |
 | `Tests/StripKitTests/` | 12 XCTest files | Cover the pure types and extracted static functions; `@testable import StripKit`. |
 | `Makefile`, `scripts/setup-signing.sh` | Build, run, signing | `make open` is the Accessibility-trusted launch path. |
-| `.github/workflows/ci.yml` | CI | Single job on `macos-15` running `swift test`. |
+| `.github/workflows/ci.yml` | CI | `macos-15` job running tests plus release-bundle metadata and signature validation. |
 | `Resources/Info.plist` | Bundle configuration | `LSUIElement=true`, `LSMinimumSystemVersion 14.0`. |
-| `wm-prototype/` | Design reference (HTML/CSS/JS mockup) | The source of the ported layout mathematics; not compiled. |
 
 ---
 
@@ -178,7 +177,7 @@ sequenceDiagram
 - **Inputs:** AX and Workspace notifications; layout targets of the form `(ax, frame, current)`.
 - **Outputs:** `onReconcile` / `onFocusActivation` / `onUserDrag` callbacks; `kAXPosition` / `kAXSize` writes; `onFocusFrame` / `onWindowLost`.
 - **Owned state (animator):** per-window `RectSpring`, an `inFlight` set for backpressure, `entries` / `lastWritten` / `drivenUntil` / `failures`, and `focusedID` — all touched on the main thread.
-- **Notes:** writes run off-main on a per-pid serial queue (`com.spike.strip.ax.<pid>`); completions hop back to the main thread. A write is dropped when one to the same window is already in flight (`inFlightDrop` signpost). `WriteFailureTracker` decides when a window element is dead: `.invalidUIElement` is immediately fatal; soft failures such as `.cannotComplete` must repeat a threshold of 3 times; any success resets the count.
+- **Notes:** writes run off-main on a per-pid serial queue (`io.github.shidil.strip.ax.<pid>`); completions hop back to the main thread. A write is dropped when one to the same window is already in flight (`inFlightDrop` signpost). `WriteFailureTracker` decides when a window element is dead: `.invalidUIElement` is immediately fatal; soft failures such as `.cannotComplete` must repeat a threshold of 3 times; any success resets the count.
 
 ### Screen and display model
 
@@ -242,7 +241,7 @@ sequenceDiagram
 ### Logging and instrumentation — `Logging`, `Signpost`
 
 - **Responsibility:** file-mirrored logging and `os_signpost` intervals on the hot path.
-- **Key files/types:** `Log` (an enum namespace with a private serial queue `com.spike.strip.log`, writing `/tmp/strip.log`); `Signpost` (subsystem `com.spike.strip`, category `hotpath`; intervals such as `placements`, `allWindows`, `chordLatency`; events such as `inFlightDrop`, `tapDisabled`, `reconcile.skip`).
+- **Key files/types:** `Log` (an enum namespace with a private serial queue `io.github.shidil.strip.log`, writing `/tmp/strip.log`); `Signpost` (subsystem `io.github.shidil.strip`, category `hotpath`; intervals such as `placements`, `allWindows`, `chordLatency`; events such as `inFlightDrop`, `tapDisabled`, `reconcile.skip`).
 - **Notes:** `Log` is reachable from every layer and is serialized through its own queue. Signposts carry no cost when not recording; `make profile` attaches `xctrace`.
 
 ---
@@ -329,7 +328,7 @@ The codebase uses no locks and no actors. Thread safety rests on two conventions
 - `WriteFailureTracker.record` (hopped back to the main thread).
 - Animator state: `inFlight`, `entries`, `lastWritten`, `drivenUntil`, `failures`, `focusedID`.
 
-**Off the main thread (per-pid serial `DispatchQueue`, `com.spike.strip.ax.<pid>`):**
+**Off the main thread (per-pid serial `DispatchQueue`, `io.github.shidil.strip.ax.<pid>`):**
 
 - The animator's display-link tick writes (`AXWindow.setFrame`), `EnhancedUI` toggles, and `focusAttributes` (the AX half of focus). FIFO ordering guarantees that disabling `AXEnhancedUserInterface` precedes frame writes and that re-enabling it (in `stop()`) follows the final frame.
 

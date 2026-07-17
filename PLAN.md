@@ -2,20 +2,17 @@
 
 > **Source of truth.** This file is the durable record of the roadmap, milestone status, and the
 > hard-won architecture/gotchas, so work can continue in a fresh session without the original chat
-> history. **`HANDOFF.md` is the active-task doc** — a per-task brief for an agent, replaced each time
-> a new task is handed over; it is *not* a roadmap. Engram memory: `mem_search "strip-wm-spike"`.
+> history. Engram memory: `mem_search "strip-wm-spike"`.
 
 ## Goal
 
-Build the **real** macOS window manager (not a web port) that implements the **Strip** concept from
-the Claude Design prototype in `wm-prototype/macos-window-manager-prototype/`: windows live on a
-horizontal *film*, the focused window stays centered, neighbors flow past it ("the center slot never
-moves"). It began as a **spike to prove the strip concept feels good** (M0–M5, done) and is now being
-turned into a **daily driver** (M6+).
+Build a **real macOS window manager** that implements the **Strip** concept: windows live on a
+horizontal *film*, the focused window stays centered, and neighbors flow past it ("the center slot
+never moves"). It began as a **spike to prove the strip concept feels good** (M0–M5, done) and is now
+being turned into a **daily driver** (M6+).
 
-The prototype HTML (`project/Strip Window Manager.dc.html` + `StripWindow.dc.html`) is the **design
-spec**, not code to port literally. Its `geom()`/`resolve()`/`computeVM()` logic *was* ported (as the
-layout engine); its visuals guide the M4 overlay chrome.
+The original design export is not distributed because its redistribution provenance was unclear.
+Its `geom()`/`resolve()`/`computeVM()` concepts were ported into the tested Swift layout engine.
 
 ## North star
 
@@ -60,7 +57,7 @@ own overlays — **never** to move managed app windows.
 ```
 Package.swift                      swift-tools 6.0; StripKit lib + Strip exe + StripKitTests; lang v5
 Makefile                           build / bundle / run / open / test / clean / setup-signing
-Resources/Info.plist               LSUIElement agent, bundle id com.spike.strip
+Resources/Info.plist               LSUIElement agent, bundle id io.github.shidil.strip
 scripts/setup-signing.sh           creates self-signed "Strip Dev" code-signing identity
 
 Sources/Strip/main.swift           thin entry: .accessory NSApplication + AppDelegate
@@ -150,7 +147,7 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, O
    Accessibility (TCC attributes it to the parent shell). Use `make open`. Because that detaches
    stdout, the app logs to `/tmp/strip.log` — `cat`/`tail` it to observe.
 2. **Stable signing.** Ad-hoc signing changes cdhash each build → grant invalidated. The "Strip Dev"
-   cert keeps it stable. If you change signing identity: `tccutil reset Accessibility com.spike.strip`
+   cert keeps it stable. If you change signing identity: `tccutil reset Accessibility io.github.shidil.strip`
    then `make open` and re-grant once.
 3. Self-signed cert shows `CSSMERR_TP_NOT_TRUSTED` and is hidden by `security find-identity -v`
    (valid-only) — detect with `find-identity -p codesigning` WITHOUT `-v`. codesign + TCC accept it.
@@ -412,13 +409,8 @@ longer shows on screen, so the strip closes up.)
 ## Prototype reference & feel notes (for M4/M5)
 
 The prototype is the **visual spec** — re-read it when building chrome:
-`wm-prototype/macos-window-manager-prototype/project/Strip Window Manager.dc.html` (+ `StripWindow.dc.html`).
-Useful line ranges: status bar **23-38**, window strip/pin badge **40-49**, film rail **51-59**,
-shortcuts button **61-63**, hint **65-74**, help overlay **76-95** (rows **310-320**), overview
-**97-109**; logic `geom()` **165-179**, `resolve()` **181-202**, `computeVM()` **204-300**, label
-helpers **290-293**, `onKey` map **390-418**; theme accents/letters/titles **131-134**. `StripWindow.dc.html`
-holds the per-app window-body mockups (editor/terminal/browser/chat/mail/music/calendar) — reference
-only for Overview card styling, not needed to manage real windows.
+The original design export is intentionally excluded from this repository. Durable behavior is
+specified by the Swift layout engine, tests, architecture documentation, and accepted ADRs.
 
 **Feel feedback (from M2 testing, user-confirmed):**
 - Motion is smooth overall; **monocle is smoothest** (no resize). **Track and Pop springs feel best.**

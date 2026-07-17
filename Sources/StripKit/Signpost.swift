@@ -12,7 +12,7 @@ import os
 /// are safe to call inside the display-link `tick` loop. Never pass a pre-built `String` here.
 ///
 /// To observe: Instruments → os_signpost instrument (or `xctrace`), filter subsystem
-/// `com.spike.strip`, category `hotpath`.
+/// `io.github.shidil.strip`, category `hotpath`.
 public enum Signpost {
-    public static let log = OSSignposter(subsystem: "com.spike.strip", category: "hotpath")
+    public static let log = OSSignposter(subsystem: "io.github.shidil.strip", category: "hotpath")
 }

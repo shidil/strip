@@ -2,10 +2,13 @@ CONFIG ?= debug
 APP_NAME := Strip
 APP    := .build/$(APP_NAME).app
 BIN    := $(APP)/Contents/MacOS/$(APP_NAME)
-BUNDLE_ID := com.spike.strip
+BUNDLE_ID := io.github.shidil.strip
 SIGN_ID   ?= Strip Dev
+REQUIRE_SIGNING ?= 0
+CODESIGN_OPTIONS ?=
+DIST_DIR := .build/dist
 
-.PHONY: build bundle run open profile test e2e e2e-vm clean setup-signing
+.PHONY: build bundle verify-bundle archive notarized-release ci run open profile test e2e e2e-vm clean setup-signing
 
 ## Compile the Swift package.
 build:
@@ -22,14 +25,47 @@ bundle: build
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp .build/$(CONFIG)/$(APP_NAME) $(BIN)
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
-	@if security find-identity -p codesigning | grep -q "$(SIGN_ID)"; then \
+	@if [ -n "$(SIGN_ID)" ] && security find-identity -p codesigning | grep -Fq "$(SIGN_ID)"; then \
 		echo "Signing with '$(SIGN_ID)'"; \
-		codesign --force --sign "$(SIGN_ID)" --identifier $(BUNDLE_ID) $(APP); \
+		codesign --force $(CODESIGN_OPTIONS) --sign "$(SIGN_ID)" --identifier $(BUNDLE_ID) $(APP); \
+	elif [ "$(REQUIRE_SIGNING)" = "1" ]; then \
+		echo "Required signing identity '$(SIGN_ID)' was not found" >&2; \
+		exit 1; \
 	else \
-		echo "No '$(SIGN_ID)' identity — ad-hoc signing (run 'make setup-signing' for a stable grant)"; \
+		echo "No development identity — ad-hoc signing (not for public distribution)"; \
 		codesign --force --sign - --identifier $(BUNDLE_ID) $(APP); \
 	fi
 	@echo "Built $(APP)"
+
+## Validate source metadata and assembled application bundle.
+verify-bundle:
+	plutil -lint Resources/Info.plist
+	@test -d $(APP) || (echo "Missing $(APP); run 'make bundle' first" >&2; exit 1)
+	@actual=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' $(APP)/Contents/Info.plist); \
+		test "$$actual" = "$(BUNDLE_ID)" || (echo "Bundle id $$actual != $(BUNDLE_ID)" >&2; exit 1)
+	codesign --verify --deep --strict --verbose=2 $(APP)
+
+## Create an ad-hoc local test archive and checksum. Never publish this artifact.
+archive:
+	@$(MAKE) bundle CONFIG=release SIGN_ID=
+	@$(MAKE) verify-bundle
+	@mkdir -p $(DIST_DIR)
+	@version=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist); \
+		artifact="$(DIST_DIR)/Strip-$$version-macos-local.zip"; \
+		rm -f "$$artifact" "$$artifact.sha256"; \
+		ditto -c -k --keepParent $(APP) "$$artifact"; \
+		artifact_name=$$(basename "$$artifact"); \
+		(cd "$(DIST_DIR)" && shasum -a 256 "$$artifact_name" > "$$artifact_name.sha256"); \
+		echo "Created local-only $$artifact"
+
+notarized-release:
+	@bash scripts/release.sh
+
+## Public pull-request validation that does not require TCC permissions.
+ci:
+	$(MAKE) test
+	$(MAKE) bundle CONFIG=release SIGN_ID=
+	$(MAKE) verify-bundle
 
 ## Run the bundled binary directly so logs stream to this terminal (bundle identity still applies).
 run: bundle
@@ -48,7 +84,7 @@ open: bundle
 ##
 ## Default template "Logging" carries the os_signpost instrument: it shows the Phase 0 intervals
 ## (apply / placements / refresh / allWindows / animate / frame) and events (setFrame.enqueue/.done,
-## inFlightDrop, reconcile) — filter subsystem com.spike.strip, category hotpath. It also avoids the
+## inFlightDrop, reconcile) — filter subsystem io.github.shidil.strip, category hotpath. It also avoids the
 ## task_for_pid entitlement that sampling templates need on attach.
 ## Complementary passes (may prompt for authorization on attach):
 ##   make profile TEMPLATE="Time Profiler"   # main-thread stalls (R1/R4)

@@ -1,0 +1,32 @@
+name: Permission or setup problem
+description: Report build, signing, Accessibility, or Screen Recording setup failures
+title: "[Setup]: "
+labels: [setup]
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: macOS and Xcode versions
+    validations:
+      required: true
+  - type: dropdown
+    id: launch
+    attributes:
+      label: Launch method
+      options:
+        - make open
+        - Opened Strip.app in Finder
+        - make run or direct executable
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Command and redacted output
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: Troubleshooting already attempted

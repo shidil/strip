@@ -4,3 +4,10 @@
 .DS_Store
 /scripts/e2e/fixtures/*.png
 /scripts/e2e/artifacts/
+
+# Ephemeral task/session state is intentionally not published.
+/HANDOFF.md
+/prompt.txt
+
+# The original exported prototype has unclear redistribution provenance.
+/wm-prototype/

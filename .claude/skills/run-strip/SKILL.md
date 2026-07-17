@@ -41,7 +41,7 @@ changes, hotkey handling, and errors. For a one-shot look use `tail -n 80 /tmp/s
 Symptom: windows stop moving / AX writes fail after a signing-identity change. Recover with:
 
 ```sh
-tccutil reset Accessibility com.spike.strip
+tccutil reset Accessibility io.github.shidil.strip
 make open
 # then re-toggle Strip in System Settings -> Privacy & Security -> Accessibility
 ```

@@ -13,7 +13,7 @@ public enum RailEdge: String, Codable, CaseIterable {
 /// pins — is deliberately **excluded**: `CGWindowID`s aren't stable across a relaunch, so they're
 /// re-discovered fresh each launch (`StripController.refresh()`).
 ///
-/// Persisted as JSON in `UserDefaults` under the app's domain (`com.spike.strip`).
+/// Persisted as JSON in `UserDefaults` under the app's domain (`io.github.shidil.strip`).
 struct PersistedSettings: Codable, Equatable {
     var config: LayoutConfig
     var cols: Int

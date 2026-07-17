@@ -192,7 +192,7 @@ scenario_focus_move() {
 }
 
 # Carries the FOCUSED window (⌃⌥⇧H/L), not necessarily the centered one — the behavior fixed by
-# StripState.moveFocused (HANDOFF.md "Swap focused <-> neighbor"). Resets focus to L first (2x
+# StripState.moveFocused swaps the focused window with its neighboring slot. Resets focus to L first (2x
 # focusPrev clamps there, no wrap) for a deterministic, non-edge starting slot.
 scenario_move_focused_swap() {
   local ok=0 cp block l_app c_app focus_app
