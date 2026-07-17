@@ -8,7 +8,7 @@ are no supported binary release lines.
 ## Reporting a Vulnerability
 
 Do not open a public issue. Use GitHub's private vulnerability report form:
-<https://github.com/shidil/wm/security/advisories/new>.
+<https://github.com/shidil/strip/security/advisories/new>.
 
 Before making the repository public, the repository owner must enable GitHub private vulnerability
 reporting and verify that this link works from a non-maintainer account. If the form is unavailable,
