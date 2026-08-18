@@ -14,6 +14,10 @@
 - [Architecture Decision Records](adr/README.md)
 - [Performance measurement](../MEASURING.md)
 
+## Active Spikes
+
+- [Multiplexed window sessions](spikes/0001-multiplex-sessions.md)
+
 ## Planning and History
 
 - [Roadmap](../PLAN.md)

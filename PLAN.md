@@ -296,6 +296,7 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, O
         *you* drag their native resize handle — their own AX-resize slowness. Per-app handling → M9.
 - [ ] **M8 — Workspaces (multiple strips).** ← **NEXT.** The niri model is *several* strips — the real
       organizing tool on one big display.
+      - Active design spike: [multiplexed window sessions](docs/spikes/0001-multiplex-sessions.md).
       - N independent `StripState`s; switch with a hotkey; carry-focused-window-to-workspace.
       - Inactive workspaces' windows parked off-screen (parking mechanism already exists).
       - Per-workspace center / pins / layout.
