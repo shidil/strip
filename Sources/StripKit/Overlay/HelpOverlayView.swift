@@ -19,6 +19,7 @@ struct HelpOverlayView: View {
         (["[", "]"], "Tighten / loosen gaps & padding"),
         (["T"], "Cycle the film-feel animation"),
         (["Space"], "Overview of every window"),
+        (["F"], "Search windows & tabs (or / inside Overview)"),
         (["/"], "Toggle this panel"),
     ]
 

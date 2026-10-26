@@ -197,6 +197,12 @@ public final class WindowAnimator: NSObject {
         queue(for: ax.pid).async { ax.focusAttributes() }
     }
 
+    /// Run arbitrary AX `work` for `pid` on that app's serial AX queue — ordered with its frame writes
+    /// and focus hand-off (used to press a tab picked in the Overview search before re-centering).
+    public func performAX(pid: pid_t, _ work: @escaping () -> Void) {
+        queue(for: pid).async(execute: work)
+    }
+
     /// Apply targets instantly with no animation (used when animation is disabled). `current` (the
     /// live seed) is unused on the snap path — windows jump straight to `frame`.
     public func snap(_ targets: [(ax: AXWindow, frame: CGRect, current: CGRect)]) {

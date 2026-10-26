@@ -81,6 +81,44 @@ public final class OverlayController {
     /// `renderOverview` rebuilds the hosting view on every snapshot, which would reset view state.
     private let overviewSelection = OverviewSelection()
 
+    /// Spotlight-style search inside the Overview (⌃⌥F, or `/` while it's open): query, ranked window
+    /// + tab hits, and the AX tab scan that feeds it.
+    private let search = SearchModel()
+    private let tabScanner = TabScanner()
+    /// How the current search session was opened and whether it ended in a pick — logged (counts and
+    /// ranks only, never query text or titles) so prototype feedback has numbers behind it.
+    private var searchOpenedVia = ""
+    private var searchPicked = false
+    /// Bumped per search session so a scan still running from an earlier session can't write its
+    /// (possibly stale) tabs or clear the `scanning` flag of the current one.
+    private var scanGeneration = 0
+
+    /// Resolves a ring window's AX element, for the search's tab scan. Set by `AppDelegate`.
+    public var windowLookup: ((CGWindowID) -> AXWindow?)?
+
+    /// Switch to a tab (run the press) and center its window. Set by `AppDelegate`
+    /// (`StripController.centerTab`, which orders the press on the app's AX queue).
+    public var onCenterTab: ((CGWindowID, @escaping () -> Void) -> Void)?
+
+    /// Run a tab press without moving windows (tab peek). Set by `AppDelegate` (`StripController.pressTab`).
+    public var onPressTab: ((CGWindowID, @escaping () -> Void) -> Void)?
+
+    /// Tab peek: while ↑↓ rests on a tab result, the real tab is switched and its window re-captured
+    /// so the card previews it; peeked windows go back to their original tab when the selection moves
+    /// on or search ends without picking them. `peekShown` = window → tab index a peek left showing.
+    private var peekShown: [CGWindowID: Int] = [:]
+    private var peekWork: DispatchWorkItem?
+    private var peekCount = 0
+    /// Pause on a result before peeking, so scrolling fast through results doesn't flip tabs.
+    private static let peekSettleDelay: TimeInterval = 0.12
+    /// Re-captures after a peek press: most warm tabs paint within ~40–80 ms (measured); the second
+    /// catches slower ones.
+    private static let peekCaptureDelays: [TimeInterval] = [0.09, 0.3]
+
+    /// Fired with `true`/`false` as the search field starts/stops taking input, so the hotkey tap
+    /// routes plain keys as text exactly while it is.
+    public var onSearchActive: ((Bool) -> Void)?
+
     public init() {
         // Stable roots: set once, then drive incremental updates by mutating `model` (perf: overlay
         // render). The rail's onTap reads `self?.onCenter` dynamically, so it stays correct even though
@@ -289,6 +327,7 @@ public final class OverlayController {
     public func toggleOverview() {
         onMain {
             if let panel = self.overviewPanel {
+                self.endSearch(reason: self.searchPicked ? "pick" : "close")
                 panel.orderOut(nil)
                 self.overviewPanel = nil
                 self.onOverviewVisibility?(false)
@@ -350,19 +389,176 @@ public final class OverlayController {
         }
     }
 
+    // MARK: - Search
+
+    /// ⌃⌥F / menu: open the Overview straight into search; from browse mode, switch to search; while
+    /// already searching, close.
+    public func toggleSearch(via: String = "hotkey") {
+        onMain {
+            if self.overviewPanel != nil {
+                if self.search.active { self.toggleOverview() } else { self.beginSearch(via: via) }
+                return
+            }
+            self.toggleOverview()
+            if self.overviewPanel != nil {
+                self.beginSearch(via: via)
+            } else {
+                self.onOverviewVisibility?(false) // the tap set its flags optimistically — undo them
+            }
+        }
+    }
+
+    /// Switch the open Overview into search (`/`), and kick off the tab scan.
+    public func beginSearch(via: String = "slash") {
+        onMain {
+            guard self.overviewPanel != nil, !self.search.active else { return }
+            self.searchOpenedVia = via
+            self.searchPicked = false
+            if let rail = self.lastSnapshot?.rail { self.search.setRail(rail) }
+            self.search.begin()
+            self.onSearchActive?(true)
+            Log.line("search: begin via=\(via)")
+            self.scanTabs()
+        }
+    }
+
+    /// Apply one search-field key (typing, selection, confirm, escape) while searching.
+    public func handleSearchKey(_ key: SearchKey) {
+        onMain {
+            guard self.overviewPanel != nil, self.search.active else { return }
+            switch key {
+            case .edit(.deleteBackward) where self.search.query.isEmpty:
+                self.endSearch(reason: "grid") // ⌫ on an empty query → back to the card grid
+            case .edit(let e):
+                self.search.setQuery(applying(e, to: self.search.query))
+            case .up:
+                self.search.moveSelection(-1)
+            case .down:
+                self.search.moveSelection(1)
+            case .confirm:
+                self.pickSearchResult(self.search.selected)
+            case .escape:
+                if self.search.query.isEmpty { self.toggleOverview() } else { self.search.setQuery("") }
+            case .paste:
+                let line = NSPasteboard.general.string(forType: .string)?
+                    .split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+                if !line.isEmpty { self.search.setQuery(self.search.query + line) }
+            case .ignore:
+                break
+            }
+            self.schedulePeek()
+        }
+    }
+
+    /// Peek the selected tab result after the selection settles (restoring any other peeked window).
+    private func schedulePeek() {
+        peekWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.search.active else { return }
+            var target = self.search.selectedTarget
+            if let tab = self.search.tab(for: target), tab.separateWindow { target = nil } // native tabs: no peek
+            self.applyPeek(selected: target)
+        }
+        peekWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.peekSettleDelay, execute: work)
+    }
+
+    /// Press whatever tabs `peekPresses` says, then re-capture each touched window so its card shows
+    /// the tab now visible. Main thread.
+    private func applyPeek(selected: SearchTarget?) {
+        let original = search.originalTabs
+        let presses = peekPresses(selected: selected, shown: peekShown, original: original)
+        for (window, index) in presses {
+            guard let tab = search.tabs[window].flatMap({ $0.indices.contains(index) ? $0[index] : nil }) else { continue }
+            onPressTab?(window) { tab.press() }
+            if index == original[window] { peekShown.removeValue(forKey: window) } else { peekShown[window] = index; peekCount += 1 }
+            let pressedAt = CFAbsoluteTimeGetCurrent()
+            for delay in Self.peekCaptureDelays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.thumbnails.captureNow(window, pointSize: Self.cardThumbSize) { ok in
+                        if !ok { Log.line("search: peek capture failed id=\(window)") }
+                        else if delay == Self.peekCaptureDelays.first {
+                            Log.line("search: peek id=\(window) captured "
+                                     + String(format: "%.0fms", (CFAbsoluteTimeGetCurrent() - pressedAt) * 1000))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Go to result `i`: switch to its tab (if it's a tab hit), center its window, close the Overview.
+    private func pickSearchResult(_ i: Int) {
+        guard search.results.indices.contains(i) else { return }
+        let target = search.results[i].candidate.target
+        Log.line("search: pick kind=\(target.isTab ? "tab" : "window") rank=\(i) "
+                 + "qlen=\(search.query.count) results=\(search.results.count)")
+        searchPicked = true
+        peekWork?.cancel()
+        // Put back every *other* peeked window; the picked tab itself stays (centerTab presses it).
+        applyPeek(selected: target.isTab ? target : nil)
+        if case .tab(let id, let index) = target, let tabs = search.tabs[id], tabs.indices.contains(index) {
+            let tab = tabs[index]
+            onCenterTab?(id) { tab.press() }
+        } else {
+            onCenter?(target.windowID)
+        }
+        toggleOverview()
+    }
+
+    /// Leave search mode (back to the grid, or as part of closing). Logs the session outcome.
+    private func endSearch(reason: String) {
+        guard search.active else { return }
+        peekWork?.cancel()
+        if !searchPicked { applyPeek(selected: nil) } // leaving without a pick → every peeked tab restored
+        Log.line("search: end reason=\(reason) via=\(searchOpenedVia) qlen=\(search.query.count) "
+                 + "results=\(search.results.count) tabs=\(search.tabCount) peeks=\(peekCount)")
+        peekShown = [:]
+        peekCount = 0
+        search.end()
+        scanGeneration += 1 // orphan any scan still in flight
+        onSearchActive?(false)
+    }
+
+    /// Scan every ring window's tab bar (off-main, per app); hits stream into the results as each
+    /// window finishes.
+    private func scanTabs() {
+        guard let rail = lastSnapshot?.rail, let lookup = windowLookup else { return }
+        let requests = rail.compactMap { item in
+            lookup(item.id).map { TabScanner.Request(id: item.id, ax: $0, title: item.title, appName: item.appName) }
+        }
+        guard !requests.isEmpty else { return }
+        scanGeneration += 1
+        let generation = scanGeneration
+        search.setScanning(true)
+        tabScanner.scan(requests,
+                        onWindow: { [weak self] id, tabs in
+                            guard let self, generation == self.scanGeneration else { return }
+                            self.search.setTabs(tabs, for: id)
+                            self.schedulePeek() // the selection may now sit on a freshly-found tab
+                        },
+                        onDone: { [weak self] in
+                            guard let self, generation == self.scanGeneration else { return }
+                            self.search.setScanning(false)
+                        })
+    }
+
     /// (Re)build the overview's SwiftUI content for the given snapshot.
     private func renderOverview(into panel: NSPanel, _ snapshot: OverlaySnapshot) {
         // Keep the selection in range — the rail count can shrink between renders.
         if !snapshot.rail.isEmpty {
             overviewSelection.index = min(max(0, overviewSelection.index), snapshot.rail.count - 1)
         }
+        search.setRail(snapshot.rail)
         let hosting = NSHostingView(rootView: AnyView(
             OverviewView(
                 items: snapshot.rail,
                 thumbnails: thumbnails,
                 selection: overviewSelection,
+                search: search,
                 onCenter: { [weak self] id in self?.onCenter?(id) },
-                onClose: { [weak self] in self?.toggleOverview() }
+                onClose: { [weak self] in self?.toggleOverview() },
+                onPick: { [weak self] i in self?.onMain { self?.pickSearchResult(i) } }
             )
         ))
         panel.contentView = hosting

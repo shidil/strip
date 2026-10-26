@@ -391,6 +391,27 @@ public final class StripController {
         apply()
     }
 
+    /// The AX element of a managed window — the Overview search walks it for tabs (`TabScanner`).
+    public func axWindow(for id: CGWindowID) -> AXWindow? { windowsById[id]?.ax }
+
+    /// Switch to a tab inside window `id` (Overview search), then center the window. `press` runs on
+    /// the app's animator AX queue so it's ordered before this apply's frame writes and the deferred
+    /// focus hand-off; the app's activation/focus notifications it causes are pre-suppressed so the
+    /// press doesn't kick off a full reconcile (perf 1.1).
+    public func centerTab(_ id: CGWindowID, press: @escaping () -> Void) {
+        guard windowsById[id] != nil else { return }
+        pressTab(id, press: press)
+        setCenter(id)
+    }
+
+    /// Run a tab press for window `id` without moving anything (Overview search tab *peek*): on the
+    /// app's animator AX queue, with its activation/focus notifications pre-suppressed.
+    public func pressTab(_ id: CGWindowID, press: @escaping () -> Void) {
+        guard let w = windowsById[id] else { return }
+        onWillActivate?(w.ax.pid)
+        animator.performAX(pid: w.ax.pid, press)
+    }
+
     /// Bring a specific window to center (film-rail chip click; `StripState.setCenter`).
     public func setCenter(_ id: CGWindowID) {
         state.setCenter(id)

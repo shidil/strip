@@ -21,8 +21,13 @@ struct OverviewView: View {
     /// they land, falling back to an accent placeholder until then (or when Screen Recording is off).
     @ObservedObject var thumbnails: ThumbnailStore
     @ObservedObject var selection: OverviewSelection
+    /// Search state (⌃⌥F or `/`): while a query is typed the grid shows only matching windows, best
+    /// match first, and the card holding the selected hit gets the selection halo.
+    @ObservedObject var search: SearchModel
     let onCenter: (CGWindowID) -> Void
     let onClose: () -> Void
+    /// Pick search result `i` (click on a result row).
+    let onPick: (Int) -> Void
 
     /// Cards per row — matches the prototype's natural wrap at its 1180px max width (3 × 304 + gaps).
     /// Internal so `OverlayController` shares the one constant when computing grid navigation.
@@ -32,8 +37,24 @@ struct OverviewView: View {
     /// `flex-wrap` + `justify-content:center`, which a fixed-column `LazyVGrid` can't reproduce —
     /// it would left-align the last partial row).
     private var rows: [[RailItem]] {
-        stride(from: 0, to: items.count, by: Self.perRow).map {
-            Array(items[$0 ..< min($0 + Self.perRow, items.count)])
+        let shown = visibleItems
+        return stride(from: 0, to: shown.count, by: Self.perRow).map {
+            Array(shown[$0 ..< min($0 + Self.perRow, shown.count)])
+        }
+    }
+
+    private var searching: Bool { search.active && search.hasQuery }
+
+    /// The cards to show: every window, or — while a query is typed — just the windows with a hit
+    /// (directly or via one of their tabs), in best-match order.
+    private var visibleItems: [RailItem] {
+        guard searching else { return items }
+        let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var seen = Set<CGWindowID>()
+        return search.results.compactMap { r in
+            let id = r.candidate.target.windowID
+            guard seen.insert(id).inserted else { return nil }
+            return byId[id]
         }
     }
 
@@ -55,7 +76,14 @@ struct OverviewView: View {
             GeometryReader { geo in
                 ScrollView {
                     VStack(spacing: 28) {
-                        hint
+                        if search.active {
+                            SearchPanelView(search: search,
+                                            items: Dictionary(items.map { ($0.id, $0) },
+                                                              uniquingKeysWith: { a, _ in a }),
+                                            onPick: onPick)
+                        } else {
+                            hint
+                        }
                         VStack(spacing: 24) {
                             ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                                 HStack(spacing: 24) {
@@ -63,7 +91,10 @@ struct OverviewView: View {
                                         let flat = rowIndex * Self.perRow + colIndex
                                         OverviewCard(item: item,
                                                      thumbnail: thumbnails[item.id],
-                                                     selected: flat == selection.index)
+                                                     caption: caption(for: item.id),
+                                                     selected: searching
+                                                         ? item.id == search.selectedWindowID
+                                                         : !search.active && flat == selection.index)
                                             .contentShape(Rectangle())
                                             .onTapGesture { onCenter(item.id); onClose() }
                                     }
@@ -89,6 +120,14 @@ struct OverviewView: View {
         }
     }
 
+    /// While a tab result is selected, its window's card says which tab it's previewing (the peek
+    /// switches the real tab) — or that native window tabs can't be previewed.
+    private func caption(for id: CGWindowID) -> String? {
+        guard searching, search.selectedWindowID == id,
+              let tab = search.tab(for: search.selectedTarget) else { return nil }
+        return tab.separateWindow ? "No preview for native tabs — ↩ to open" : "Tab preview · \(tab.title)"
+    }
+
     private var hint: some View {
         (Text("Overview · ")
             + Text("↑↓←→").bold().foregroundColor(.white)
@@ -97,6 +136,8 @@ struct OverviewView: View {
             + Text(" to move · ")
             + Text("↩").bold().foregroundColor(.white)
             + Text(" to center · ")
+            + Text("/").bold().foregroundColor(.white)
+            + Text(" to search · ")
             + Text("Esc").bold().foregroundColor(.white)
             + Text(" to close"))
             .font(.system(size: 14))
@@ -109,6 +150,8 @@ private struct OverviewCard: View {
     let item: RailItem
     /// Captured window contents, or `nil` to fall back to the accent placeholder.
     let thumbnail: CGImage?
+    /// A one-line note pinned to the card's bottom edge (tab preview), or nil.
+    let caption: String?
     /// The keyboard cursor is on this card → a distinct white halo (separate from the accent border
     /// that marks the *active* window, so a card can read as both active and selected at once).
     let selected: Bool
@@ -147,6 +190,18 @@ private struct OverviewCard: View {
         .shadow(color: .white.opacity(selected ? 0.45 : 0), radius: selected ? 18 : 0)
         .overlay(alignment: .topTrailing) {
             if item.pinned { pinnedBadge }
+        }
+        .overlay(alignment: .bottom) {
+            if let caption {
+                Text(caption)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.black.opacity(0.72)))
+                    .padding(10)
+            }
         }
     }
 

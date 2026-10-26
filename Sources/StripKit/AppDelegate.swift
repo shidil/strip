@@ -26,6 +26,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func start() {
         overlay.onCenter = { [weak self] id in self?.controller.setCenter(id) }
         overlay.onOverviewVisibility = { [weak self] open in self?.hotkeys.setOverviewOpen(open) }
+        overlay.onSearchActive = { [weak self] active in self?.hotkeys.setSearchActive(active) }
+        overlay.windowLookup = { [weak self] id in self?.controller.axWindow(for: id) }
+        overlay.onCenterTab = { [weak self] id, press in self?.controller.centerTab(id, press: press) }
+        overlay.onPressTab = { [weak self] id, press in self?.controller.pressTab(id, press: press) }
         controller.onRender = { [weak self] snapshot in self?.overlay.update(snapshot) }
         controller.onFocusFrame = { [weak self] frame in self?.overlay.updateFocusRing(frame) }
         controller.refreshAndApply()
@@ -65,7 +69,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // Any explicit layout/navigation command resumes management first; overlay-only keys don't,
         // so you can pop up help/Overview without un-suspending.
         switch command {
-        case .toggleHelp, .toggleOverview, .overview: break
+        case .toggleHelp, .toggleOverview, .overview, .toggleSearch, .beginSearch, .search: break
         default: controller.resumeIfSuspended()
         }
         switch command {
@@ -97,6 +101,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             case .confirm: overlay.confirmOverview()
             case .close: overlay.toggleOverview()
             }
+        case .toggleSearch: overlay.toggleSearch()
+        case .beginSearch: overlay.beginSearch()
+        case .search(let key): overlay.handleSearchKey(key)
         }
     }
 
@@ -161,6 +168,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
         add(menu, "Overview", #selector(toggleOverview), "")
+        add(menu, "Search windows & tabs…", #selector(toggleSearch), "f")
         add(menu, "Keyboard help…", #selector(toggleHelp), "/")
 
         menu.addItem(.separator())
@@ -196,6 +204,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleRelease() { controller.releaseAll(); rebuildMenu() }
     @objc private func toggleFocusRing() { controller.setFocusRing(!controller.focusRingEnabled); rebuildMenu() }
     @objc private func toggleOverview() { overlay.toggleOverview() }
+    @objc private func toggleSearch() { overlay.toggleSearch(via: "menu") }
     @objc private func toggleHelp() { overlay.toggleHelp() }
     @objc private func quit() { NSApp.terminate(nil) }
 

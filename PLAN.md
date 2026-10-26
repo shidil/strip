@@ -88,7 +88,11 @@ Sources/StripKit/
     WindowAnimator.swift           CADisplayLink loop; per-app off-main AX writes; EnhancedUI off
                                    for motion duration; snap() for instant
   Input/
-    HotkeyService.swift            CGEventTap behind ⌃⌥; kVK_* keycodes -> HotkeyCommand
+    HotkeyService.swift            CGEventTap behind ⌃⌥; kVK_* keycodes -> HotkeyCommand;
+                                   chordless Overview keys; search typing (`searchKey`)
+  Search/
+    WindowSearch.swift             pure: fuzzyMatch / rankSearch / query edits / pickTabGroup
+  Accessibility/TabScanner.swift   bounded off-main AX walk for a window's tab bar; AXPress a tab
 
 Tests/StripKitTests/
   ThemeTests.swift                 stable hash / accent / letter
@@ -376,8 +380,87 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
   left out. If spill turns out to be common in daily use, revisit: `StripController.apply()` already
   detects the condition (`spillsOffDisplay`), so demotion would be a targeted `state.cols` adjustment
   gated on it.
-- **Window search (overview / spotlight style)** (M) — filter `RailItem.title`/`appName` → `setCenter(id)`;
-  a search field inside overview or its own panel.
+- **Window & tab search (Spotlight-style, inside Overview)** (M → L with tab sources) — 🧪 **prototype
+  on `feat/window-search` (2026-10-26), hands-on tested by the user: success.** Goal: one keyboard interface to
+  every pane you can reach — windows *and* the tabs inside them — built on the Overview grid.
+  - **Feasibility findings (probed live 2026-10-26, read-only AX walk of each window, skipping
+    `AXWebArea`):**
+    | App | Tabs via AX? | Notes |
+    |---|---|---|
+    | Firefox | ✅ | `AXTabGroup` → `AXRadioButton`/`AXTabButton`, title + `AXValue` selected + `AXPress`. 36 nodes, 15–20 ms/window. |
+    | Firefox sidebar | ⚠️ false positive | A **second** `AXTabGroup` (Bookmarks/History/Customize sidebar), same roles. Disambiguated by `pickTabGroup`: the real bar is the group whose selected tab title matches the window title. |
+    | WezTerm | ❌ | Custom-drawn tab bar, nothing in AX (`[1/2]` only in the title). Needs a `wezterm cli list`/`activate-tab` provider. |
+    | Slack, Reviu | – | No tabs. Reviu: 6 nodes took 20 ms — cost is **per-app AX latency, not tree size**. |
+    | Terminal.app, Finder (native NSWindow tabs) | ✅ user-verified | `AXTabGroup` of radio buttons. Background native tabs are separate hidden NSWindows — `refresh()` already drops them. |
+    | Safari | ✅ after fix | **Different shape:** tab bar is an `AXOpaqueProviderGroup` ("Tab bar, N tabs") of `AXRadioButton`/`AXTabButton`; its only `AXTabGroup` wraps the *page content* (zero buttons — the prototype found it and read 0 tabs). Fixed by finding tab *buttons* (`isTabButton`) and treating their parent as the bar. |
+    | Chromium-family | expected ✅, **unverified** | Tab strip is native/views AX; must not force `AXEnhancedUserInterface`/web AX (expensive). |
+    | Electron editors (VS Code tabs) | ❌ practical | Tree only with `AXManualAccessibility` (heavy). Out of scope. |
+  - **What the prototype does:** ⌃⌥F opens Overview straight into search; `/` inside Overview switches
+    to search. Typing filters the grid to matching windows (best match first) and shows a ranked
+    window + tab list in a Spotlight-style panel. ↑↓/Tab/⌃N⌃P select, ↩ goes (tab hit: `AXPress` the
+    tab, then `setCenter(window)`), ⌫ on an empty query → back to the grid, Esc clears then closes.
+  - **Decisions taken for the prototype (revisit with feedback):**
+    1. **Typing goes through the existing event tap**, not a key-capable text field — keeps the
+       "Strip never takes focus" invariant; layout-correct via `keyboardGetUnicodeString`. Cost: no
+       IME / dead-key composition. Fallback if needed: a key-capable non-activating panel with a real
+       `NSTextField` (needs a spike: focus churn → `WindowObserver`, restoring key on close).
+    2. **Key conflicts:** while searching, *all* plain keys are text (h/j/k/l and Space type), ⌃⌥
+       chords still work, ⌘⌫ clears, ⌘V pastes, ⌘Tab/⌘`/⌘Space pass through, and every other ⌘
+       shortcut is swallowed (⌘W/⌘Q would hit the app *behind* the panel). Browse-mode hjkl
+       is untouched because search is entered explicitly (`/` or ⌃⌥F).
+    3. **Grid while searching = filter, not dim** (non-matching cards hidden, matches reordered by rank).
+    4. **Matching:** fzf-style subsequence scoring per whitespace token; every token must hit the
+       title, app name (×¾) or — for tabs — the parent window title (×⅓). Window +4 over an equal tab;
+       the active tab of a window is not listed separately (the window row covers it).
+    5. **Tab scan only when search starts**, per-app serial queues off-main, results stream in;
+       BFS bounded (depth 9, 400 nodes incl. frontier, 250 ms, 0.15 s per-call AX timeout so a hung
+       app can't hold its queue) and never enters `AXWebArea`/tables/outlines/lists. Tabs are dropped
+       at session end (stale elements) and a generation token orphans late scan callbacks. A tab pick
+       goes through `StripController.centerTab`: activation pre-suppressed, press on the animator's
+       per-pid AX queue so it's ordered before the re-center's frame writes and focus hand-off.
+       Walks the elements Strip already holds — never re-enumerates `kAXWindows` (main-bound).
+  - **Code:** pure `Search/WindowSearch.swift` (`fuzzyMatch`, `rankSearch`, `applying(QueryEdit)`,
+    `pickTabGroup`) + `searchKey(...)` in `HotkeyService.swift` — all in `WindowSearchTests`;
+    `Accessibility/TabScanner.swift` (walk + press, `tabScan` signpost); `Overlay/SearchModel.swift`,
+    `Overlay/SearchPanelView.swift`; wiring in `OverlayController` (`toggleSearch`/`beginSearch`/
+    `handleSearchKey`) and `AppDelegate`.
+  - **Feedback instrumentation:** `/tmp/strip.log` lines `search: begin|pick|end|tabs|tab scan done`
+    carry counts, ranks and query *length* only — never query text or tab titles.
+    `scripts/search-feedback.sh` summarizes them (pick rate, rank-of-pick, tabs found, scan ms).
+  - **Feedback round 1 (2026-10-26):** ⌃⌥F, `/`, ⌫-to-grid, ↑↓ selection, window and tab picks all
+    worked as expected; tabs showed for Firefox, Terminal, Finder; **not Safari** (fixed above).
+    `search-feedback.sh`: 18 sessions, 11 picks (61%) — **8 tab / 3 window**, pick rank #0=7 #1=1
+    #2=2 #5=1, avg query 3.5 chars; tab scan avg 35.8 ms / max 126.6 ms, avg 4.8 tabs, 1 ambiguous
+    window. Tabs are the main use — the feature's value is tab reach, not window search.
+  - **Wish: preview a tab's content in the card while ↑↓ through tab results.** Feasibility (probed):
+    - A background tab's content **isn't capturable**. ScreenCaptureKit lists no window for it
+      (browser tabs share one window; hidden native-tab NSWindows are off-screen and fail to
+      capture). Only the visible tab renders.
+    - **Peek works and is fast:** AXPress the tab → content visible in a capture in **41–77 ms**
+      (Safari 72/77 ms, Firefox 41/51 ms, warm tabs, 2 runs each), capture ~15 ms. Restoring the
+      original tab is another AXPress. Side effects: the real tab switches behind the blur;
+      unloaded/discarded tabs reload (network, slower); media may start; parked (off-display)
+      windows may not capture.
+    - Zero-side-effect alternative: **cache** a thumbnail per (window, tab title) whenever that tab
+      is seen active — stale, and empty for tabs never seen.
+    - **Native window tabs can't be peeked safely:** each AppKit tab is its own NSWindow, so a switch
+      swaps the on-screen `CGWindowID` and the strip would re-adopt windows under the Overview.
+      Detected by shape (`tabsAreSeparateWindows`: `AXTabGroup` directly under `AXWindow`, probed
+      with a two-tab NSWindow) → those cards say "No preview for native tabs".
+    - **User decision: peek, then restore** (2026-10-26). 🧪 Prototyped: selection rests 120 ms on a
+      tab result → `StripController.pressTab` (suppressed, animator AX queue) → re-capture the window
+      at +90 ms and +300 ms (`ThumbnailStore.captureNow`) → card shows it with a "Tab preview · …"
+      caption. Moving to another window's result, selecting a window result, ⌫-to-grid, Esc or
+      closing restores every peeked window's original tab; ↩ on a tab keeps it. Which presses to make
+      is the pure `peekPresses` (tested). Known gap: a parked (off-display) window may not capture,
+      leaving the old thumbnail under the caption (`peek capture failed` in the log).
+  - **Open questions:** filter vs dim the grid; type-to-search directly in Overview; empty query as a
+    recent-windows switcher; panel size vs the card grid on a 1440 px display.
+  - **Next phases (after feedback):** (a) verify Safari / Chromium / native tabs and add per-app
+    tab-group rules where `pickTabGroup` is ambiguous (log line `AMBIGUOUS`); (b) MRU ranking boost
+    (needs a focus-history in `StripController`); (c) non-AX providers — `wezterm cli`, AppleScript
+    URLs for Safari/Chrome (Automation TCC prompt per app), windows outside the ring (minimized /
+    hidden / other display; selecting one adopts or un-minimizes it); other Spaces stay deferred.
 - ~~**Swap focused ↔ neighbor** (S)~~ — ✅ shipped 2026-07-01: `StripState.moveFocused(_:)` (pure,
   tested) swaps the focused slot's window with its immediate slot-neighbor (L↔C or C↔R), guaranteed
   to land exactly there — a clean two-window exchange, everything else undisturbed. Focus rides along

@@ -45,7 +45,7 @@ accessory app, so its menu is `menu bar 1`, not the usual app's `menu bar 2`).
 | Release-all / resume (⌃⌥0) | |
 | Minimap position (all 4 edges, via menu) | |
 | Focus-ring toggle (via menu) | |
-| Overview open/close (via menu) | |
+| Overview open/close (via menu) | Window & tab search typing (event-tap text input — manual for now) |
 | Widen/narrow the focus window (⌃⌥= / ⌃⌥-) | |
 | Grow/shrink window height (⌃⌥↑ / ⌃⌥↓) | |
 | Tighten/loosen gaps & padding (⌃⌥[ / ⌃⌥]) | |
