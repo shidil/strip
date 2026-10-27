@@ -126,8 +126,8 @@ make test            # swift test (pure engine tests, no permission needed)
 make bundle          # build + assemble + sign .build/Strip.app
 make open            # bundle + launch via LaunchServices (TRUSTED; logs -> /tmp/strip.log)
 make run             # bundle + run inner binary (NOT trusted from shell; build-check only)
-make e2e             # hotkey/menu integration smoke suite — see TESTING.md (needs Accessibility + clean desktop)
-make e2e-vm          # same suite, isolated in a Tart VM — see TESTING.md (one-time setup required)
+make e2e             # hotkey/menu integration smoke suite on the host — kills the live Strip; see TESTING.md
+make e2e-vm          # same suite in the strip-e2e Tart VM — the default verification path (TESTING.md §7)
 ```
 **Hotkeys (behind ⌃⌥ = Control+Option)**
 | Keys | Action | Status |
@@ -565,6 +565,18 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
     - **Each tab pick pressed the tab twice.** The pick's restore went through `peekPresses`, which
       also pressed the selected tab, then `centerTab` pressed it again. Pure `pickRestores` restores
       only *other* windows now; one `tab press` line per pick, verified.
+    - **e2e coverage (2026-10-27).** 7 search scenarios in `scripts/e2e/search_scenarios.sh`, run in
+      the Tart VM (`make e2e-vm`, 21/21 pass, ~90 s): ⌃⌥F open/close; `/` and ⌫-to-grid; typing,
+      ⌫/⌥⌫, ↑↓, Esc; type an app name → ↩ centers it; ⌘W swallowed; ⌘Tab closes the Overview
+      (search and grid); native-tab pick (TextEdit, two merged docs). Oracle: a `STRIP_VERBOSE`-only
+      `search: state …` line per key (counts and app names only).
+      - **Mutation-checked:** routing native tabs back through `centerTab` fails the native-tab
+        scenario — via its adoption log check. Its real-state check (picked tab still showing 1.5 s
+        later) did *not* fail: in the VM, TextEdit doesn't switch back when the hidden tab window is
+        focused, unlike Terminal on the host. A Terminal/Finder tab fixture would reproduce the
+        visible bug; Terminal also hosts the guest runner, so that needs care.
+      - **Still manual:** card/chip clicks (positioned clicks), real browser tabs and peek
+        thumbnails, IME.
   - **Open questions:** filter vs dim the grid; type-to-search directly in Overview; empty query as a
     recent-windows switcher; panel size vs the card grid on a 1440 px display.
   - **Next phases (after feedback):** (a) verify Safari / Chromium / native tabs and add per-app

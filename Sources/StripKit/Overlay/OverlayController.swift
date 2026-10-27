@@ -502,7 +502,19 @@ public final class OverlayController {
             case .edit, .paste, .escape: if !self.peekShown.isEmpty { self.schedulePeek(restoreOnly: true) }
             case .confirm, .ignore: break
             }
+            if Log.verbose { self.logSearchState(after: key) }
         }
+    }
+
+    /// e2e oracle (`STRIP_VERBOSE` only): what a search key did, as counts plus the selected row's kind
+    /// and app name — never the query text or a title (scripts/e2e asserts on this line).
+    private func logSearchState(after key: SearchKey) {
+        guard key != .ignore else { Log.line("search: key ignored"); return }
+        guard search.active else { return }
+        let sel = search.results.indices.contains(search.selected) ? search.results[search.selected] : nil
+        let kind = sel.map { $0.candidate.target.isTab ? "tab" : "window" } ?? "none"
+        Log.line("search: state qlen=\(search.query.count) results=\(search.results.count) "
+                 + "sel=\(search.selected) kind=\(kind) app=\(sel?.candidate.appName ?? "-")")
     }
 
     /// After the selection settles, peek the selected tab result (restoring any other peeked window),

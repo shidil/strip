@@ -27,7 +27,7 @@ checkpoint() {
 # Private: shared by wait_for_new_apply and wait_for_slotted_count below.
 _latest_apply_block_since() {
   local since="$1" total new_lines block expected actual
-  total=$(wc -l < "$STRIP_E2E_LOG" 2>/dev/null | tr -d ' ')
+  total=$({ wc -l < "$STRIP_E2E_LOG"; } 2>/dev/null | tr -d ' ')
   total=${total:-0}
   [ "$total" -gt "$since" ] || return 1
   new_lines=$(tail -n "+$((since + 1))" "$STRIP_E2E_LOG")
@@ -144,7 +144,7 @@ wait_for_line() {
   iterations=$(( timeout * 10 ))
   for ((i = 0; i < iterations; i++)); do
     local total
-    total=$(wc -l < "$STRIP_E2E_LOG" 2>/dev/null | tr -d ' ')
+    total=$({ wc -l < "$STRIP_E2E_LOG"; } 2>/dev/null | tr -d ' ')
     total=${total:-0}
     if [ "$total" -gt "$since" ]; then
       local match
@@ -209,7 +209,7 @@ parse_clamp_actual_for_app() {
   iterations=$(( timeout * 10 ))
   for ((i = 0; i < iterations; i++)); do
     local total
-    total=$(wc -l < "$STRIP_E2E_LOG" 2>/dev/null | tr -d ' ')
+    total=$({ wc -l < "$STRIP_E2E_LOG"; } 2>/dev/null | tr -d ' ')
     total=${total:-0}
     if [ "$total" -gt "$since" ]; then
       local line
