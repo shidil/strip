@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Strip — a film-strip window manager for macOS</title>
+  <meta name="description" content="Strip is an open-source macOS window manager where the center slot never moves: windows roll past it like film through a projector gate. No SIP changes.">
+  <link rel="canonical" href="https://shidil.github.io/strip/">
+
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0b11">
+
+  <!-- Social cards -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Strip">
+  <meta property="og:title" content="Strip — pin the view, roll the windows">
+  <meta property="og:description" content="A macOS window manager where the slots stay put and the windows slide behind them, like film past a fixed projector gate.">
+  <meta property="og:url" content="https://shidil.github.io/strip/">
+  <meta property="og:image" content="https://shidil.github.io/strip/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Strip: a strip of app windows rolling under a fixed center slot.">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/site.css">
+
+  <!-- Swap .no-js for .js before first paint so enhanced-only UI never flashes. -->
+  <script>document.documentElement.classList.replace('no-js', 'js');</script>
+  <script src="assets/js/explainer.js" defer></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Strip",
+    "description": "An experimental, open-source macOS window manager that keeps the focused window in a fixed center slot and rolls the other windows past it.",
+    "url": "https://shidil.github.io/strip/",
+    "applicationCategory": "UtilitiesApplication",
+    "operatingSystem": "macOS 14 or later",
+    "license": "https://opensource.org/licenses/MIT",
+    "isAccessibleForFree": true,
+    "author": { "@type": "Person", "name": "Shidil Eringa" },
+    "sameAs": "https://github.com/shidil/strip"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container site-header__inner">
+      <a class="brand" href="./" aria-label="Strip home">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span class="brand__name">Strip</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="#how-it-works">How it works</a>
+        <a href="#features">Features</a>
+        <a href="#get-started">Get started</a>
+        <a class="site-nav__github" href="https://github.com/shidil/strip">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- Hero ------------------------------------------------------------------------------------>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero__drift" data-drift aria-hidden="true"></div>
+      <div class="container hero__content">
+        <p class="pill pill--blue">Window manager for macOS</p>
+        <h1 id="hero-title" class="hero__title">Pin the view.<br>Roll the windows.</h1>
+        <p class="hero__lead">
+          Strip is a window manager for macOS where the slots stay put and the windows slide
+          behind them &mdash; like a strip of film past a fixed projector gate.
+        </p>
+        <div class="hero__actions">
+          <a class="button button--primary" href="#how-it-works">Walk me through it <span aria-hidden="true">&rarr;</span></a>
+          <a class="button button--ghost" href="https://github.com/shidil/strip">View on GitHub <span aria-hidden="true">&#8599;</span></a>
+        </div>
+        <p class="hero__note">Niri&#8209;inspired, built for macOS &middot; free and open source</p>
+      </div>
+    </section>
+
+    <!-- Explainer: scene text is plain HTML; explainer.js adds the animated stage + controls ----->
+    <section id="how-it-works" class="section explainer" aria-labelledby="how-title" data-explainer>
+      <div class="container">
+        <header class="section__header">
+          <h2 id="how-title">How it works</h2>
+          <p>Five ideas, one strip of film.</p>
+        </header>
+
+        <div class="explainer__player" tabindex="0" aria-roledescription="walkthrough"
+             aria-label="Strip walkthrough. Use the left and right arrow keys to change scenes.">
+          <div class="stage" data-stage aria-hidden="true"></div>
+
+          <ol class="scenes" data-scenes>
+            <li class="scene" data-scene="problem" data-tone="rose">
+              <p class="scene__tags">
+                <span class="pill">The problem</span>
+                <span class="pill pill--outline">neck: tilted</span>
+              </p>
+              <h3>Your focus keeps drifting off&#8209;center.</h3>
+              <p>
+                Scrolling and tiling layouts move the viewport. The window you care about lands
+                wherever it fits &mdash; so you re&#8209;center it by hand, again and again.
+                Forget, and you&rsquo;re craning at the left edge.
+              </p>
+            </li>
+            <li class="scene" data-scene="inversion" data-tone="mint">
+              <p class="scene__tags">
+                <span class="pill">The inversion</span>
+                <span class="pill pill--outline">eyes: forward</span>
+              </p>
+              <h3>Nail the center slot in place.</h3>
+              <p>
+                Stop moving the viewport. Fix one slot dead&#8209;center and slide the windows so
+                your focus always lands there. <kbd>H</kbd> and <kbd>L</kbd> roll the film one frame.
+              </p>
+            </li>
+            <li class="scene" data-scene="context" data-tone="indigo">
+              <p class="scene__tags">
+                <span class="pill">Context, for free</span>
+                <span class="pill pill--outline" data-tone="mint">eyes: forward</span>
+              </p>
+              <h3>Neighbors fill the sides &mdash; automatically.</h3>
+              <p>
+                Open side slots and the same film fills them with the adjacent windows. Glanceable
+                context on the edges; your work stays sacred in the middle. Nothing to drag.
+              </p>
+            </li>
+            <li class="scene" data-scene="pin" data-tone="gold">
+              <p class="scene__tags"><span class="pill">Pin what matters</span></p>
+              <h3>Lock a slot. Let the rest flow.</h3>
+              <p>
+                Pin a window and it&rsquo;s exempt from the roll &mdash; your reference stays put
+                while the film cycles through the others. Pin none, some, or all:
+                strip&#8209;shift &rarr; hybrid &rarr; independent.
+              </p>
+            </li>
+            <li class="scene" data-scene="gates" data-tone="violet">
+              <p class="scene__tags"><span class="pill">One film, many gates</span></p>
+              <h3>Same strip. Choose how many slots.</h3>
+              <p>
+                Monocle, two&#8209;up, or three&#8209;up &mdash; the film is unchanged, you just
+                open more gates onto it. Switch anytime with <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd>.
+              </p>
+            </li>
+          </ol>
+
+          <!-- Controls exist only once explainer.js has taken over (see .js in site.css). -->
+          <div class="player-controls" data-controls>
+            <div class="player-controls__dots" data-dots></div>
+            <div class="player-controls__buttons">
+              <button type="button" class="icon-button" data-action="prev" aria-label="Previous scene">&larr;</button>
+              <button type="button" class="icon-button icon-button--wide" data-action="play" aria-pressed="true">Pause</button>
+              <button type="button" class="icon-button" data-action="next" aria-label="Next scene">&rarr;</button>
+              <span class="player-controls__counter" data-counter></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Payoff ---------------------------------------------------------------------------------->
+    <section class="section payoff" aria-labelledby="payoff-title">
+      <div class="container">
+        <header class="section__header section__header--center">
+          <p class="pill pill--blue">The payoff</p>
+          <h2 id="payoff-title" class="payoff__title">Decide where to look once.</h2>
+          <p>
+            The center never moves, so your eyes and neck don&rsquo;t either. You stop managing
+            window positions and just roll the film to whatever you need.
+          </p>
+        </header>
+        <ul class="modes" aria-label="Pin modes">
+          <li class="mode">
+            <h3>Strip&#8209;shift</h3>
+            <p class="mode__rule">pin nothing</p>
+            <p>Every window rolls through the center.</p>
+          </li>
+          <li class="mode mode--gold">
+            <h3>Hybrid</h3>
+            <p class="mode__rule">pin some</p>
+            <p>Keep a reference window fixed while the rest roll past it.</p>
+          </li>
+          <li class="mode">
+            <h3>Independent</h3>
+            <p class="mode__rule">pin all</p>
+            <p>Every slot holds its own window, like a classic tiling layout.</p>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Features -------------------------------------------------------------------------------->
+    <section id="features" class="section" aria-labelledby="features-title">
+      <div class="container">
+        <header class="section__header">
+          <h2 id="features-title">Built for real macOS windows</h2>
+          <p>Not a mock-up: Strip moves the actual windows of the apps you already use.</p>
+        </header>
+        <ul class="features">
+          <li class="feature">
+            <h3>Smooth, real motion</h3>
+            <p>Spring-animated moves at your display&rsquo;s refresh rate, using the public macOS
+              Accessibility API. No SIP changes, no scripting additions.</p>
+          </li>
+          <li class="feature">
+            <h3>Tiles as you work</h3>
+            <p>New windows open right next to the one you&rsquo;re using. Dialogs, palettes and
+              tiny windows float instead of joining the film.</p>
+          </li>
+          <li class="feature">
+            <h3>Pin any slot</h3>
+            <p>Hold a reference window in place while everything else keeps rolling.</p>
+          </li>
+          <li class="feature">
+            <h3>Overview</h3>
+            <p>See every window on the film as a live thumbnail and jump straight to it.</p>
+          </li>
+          <li class="feature">
+            <h3>Film rail</h3>
+            <p>A compact minimap with app icons and hover previews, docked to any screen edge.</p>
+          </li>
+          <li class="feature">
+            <h3>Always an escape hatch</h3>
+            <p><kbd>⌃⌥0</kbd> puts every window back on screen and pauses Strip. Quitting never
+              strands a window off&#8209;screen.</p>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Keyboard -------------------------------------------------------------------------------->
+    <section id="keyboard" class="section" aria-labelledby="keyboard-title">
+      <div class="container">
+        <header class="section__header">
+          <h2 id="keyboard-title">Keyboard first</h2>
+          <p>Every command sits behind <kbd>⌃</kbd><kbd>⌥</kbd> (Control + Option).</p>
+        </header>
+        <div class="table-scroll">
+          <table class="keys-table">
+            <thead>
+              <tr><th scope="col">Keys</th><th scope="col">Action</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><kbd>⌃⌥H</kbd> / <kbd>⌃⌥L</kbd></td><td>Roll the film to the previous / next window</td></tr>
+              <tr><td><kbd>⌃⌥J</kbd> / <kbd>⌃⌥K</kbd></td><td>Move focus between slots</td></tr>
+              <tr><td><kbd>⌃⌥⇧H</kbd> / <kbd>⌃⌥⇧L</kbd></td><td>Swap the focused window with its neighbor</td></tr>
+              <tr><td><kbd>⌃⌥1</kbd> <kbd>⌃⌥2</kbd> <kbd>⌃⌥3</kbd></td><td>Monocle, two&#8209;up, three&#8209;up</td></tr>
+              <tr><td><kbd>⌃⌥P</kbd></td><td>Pin or unpin the focused slot</td></tr>
+              <tr><td><kbd>⌃⌥E</kbd></td><td>Toggle focus emphasis / equal widths</td></tr>
+              <tr><td><kbd>⌃⌥=</kbd> / <kbd>⌃⌥-</kbd></td><td>Widen / narrow the focused window</td></tr>
+              <tr><td><kbd>⌃⌥Space</kbd></td><td>Overview</td></tr>
+              <tr><td><kbd>⌃⌥T</kbd></td><td>Cycle the motion style</td></tr>
+              <tr><td><kbd>⌃⌥0</kbd></td><td>Release all windows / resume</td></tr>
+              <tr><td><kbd>⌃⌥/</kbd></td><td>Show every shortcut</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Get started ----------------------------------------------------------------------------->
+    <section id="get-started" class="section" aria-labelledby="start-title">
+      <div class="container">
+        <header class="section__header">
+          <h2 id="start-title">Get started</h2>
+        </header>
+
+        <div class="callout" role="note">
+          <strong>Experimental.</strong> Strip is an early, source-first project for developers and
+          testers. There are no binary releases yet, and it moves and resizes other apps&rsquo; windows.
+        </div>
+
+        <div class="start-grid">
+          <div>
+            <h3>Requirements</h3>
+            <ul class="checklist">
+              <li>macOS 14 or newer</li>
+              <li>Xcode 16 command-line tools</li>
+              <li>Accessibility permission (prompted on first launch)</li>
+              <li>Screen Recording permission, only for Overview thumbnails</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Build from source</h3>
+            <pre class="code"><code>git clone https://github.com/shidil/strip.git
+cd strip
+make test
+make open</code></pre>
+            <p class="muted">
+              <code>make open</code> builds the app and launches it through macOS, which is what lets
+              the Accessibility grant apply. Full instructions are in the
+              <a href="https://github.com/shidil/strip#readme">README</a>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ ------------------------------------------------------------------------------------->
+    <section id="faq" class="section" aria-labelledby="faq-title">
+      <div class="container container--narrow">
+        <header class="section__header">
+          <h2 id="faq-title">Questions</h2>
+        </header>
+        <div class="faq">
+          <details>
+            <summary>How is this different from a scrolling window manager?</summary>
+            <p>In a scrolling layout the viewport follows focus, so the window you care about can end
+              up anywhere on screen. Strip inverts that: the center slot is fixed and the windows
+              move, so focus always lands in the same place.</p>
+          </details>
+          <details>
+            <summary>Do I need to disable System Integrity Protection?</summary>
+            <p>No. Strip moves and resizes windows only through the macOS Accessibility API. It
+              doesn&rsquo;t require disabling SIP or installing a scripting addition.</p>
+          </details>
+          <details>
+            <summary>Is it on the Mac App Store?</summary>
+            <p>No. To tell windows apart reliably, Strip uses a private (but SIP-free) system call,
+              which the App Store doesn&rsquo;t allow. Builds are source-only for now.</p>
+          </details>
+          <details>
+            <summary>Does it support multiple displays or Spaces?</summary>
+            <p>Not yet. Strip currently manages a single display and is developed on a 3440&times;1440
+              ultrawide. Multi-display and Spaces support are deliberately deferred.</p>
+          </details>
+          <details>
+            <summary>Does Strip collect any data?</summary>
+            <p>No. It contains no networking, telemetry, analytics or update checks. Overview
+              thumbnails are held in memory and never written to disk. See the
+              <a href="https://github.com/shidil/strip/blob/main/PRIVACY.md">privacy notes</a>.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container site-footer__inner">
+      <p>Strip is free software under the
+        <a href="https://github.com/shidil/strip/blob/main/LICENSE">MIT License</a>.</p>
+      <nav aria-label="Project">
+        <a href="https://github.com/shidil/strip">Source</a>
+        <a href="https://github.com/shidil/strip/blob/main/CONTRIBUTING.md">Contributing</a>
+        <a href="https://github.com/shidil/strip/blob/main/PRIVACY.md">Privacy</a>
+        <a href="https://github.com/shidil/strip/blob/main/SECURITY.md">Security</a>
+      </nav>
+    </div>
+  </footer>
+
+  <!-- One app window on the film; cloned by explainer.js for the stage and the hero. -->
+  <template id="window-tile-template">
+    <div class="window-tile">
+      <div class="window-tile__titlebar">
+        <span class="window-tile__light"></span>
+        <span class="window-tile__light"></span>
+        <span class="window-tile__light"></span>
+        <span class="window-tile__title"></span>
+      </div>
+      <div class="window-tile__accent"></div>
+      <div class="window-tile__line"></div>
+      <div class="window-tile__line window-tile__line--short"></div>
+      <div class="window-tile__glyph"></div>
+    </div>
+  </template>
+</body>
+</html>

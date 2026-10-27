@@ -1,5 +1,10 @@
 # Strip
 
+<p align="center">
+  <img src="docs/assets/strip-banner.svg" width="100%"
+       alt="Strip: a strip of app windows rolls beneath three fixed slots; the center slot never moves.">
+</p>
+
 Strip is an experimental macOS window manager that arranges application windows on a horizontal
 "film strip": the focused window stays centered while its neighbors flow past it.
 

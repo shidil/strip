@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     viewBox="0 0 1280 480" width="1280" height="480" role="img" aria-labelledby="title desc">
+  <title id="title">Strip — pin the view, roll the windows</title>
+  <desc id="desc">A strip of app windows rolls left and right beneath three fixed slots. The center
+    slot never moves; whichever window rolls into it is the focused one.</desc>
+
+  <!--
+    README banner for Strip. Pure SVG + CSS animation (no script), so it plays inside GitHub's
+    image sandbox. Geometry matches the website's stage: tiles 210×158, one film step = 228,
+    gates centered on x=640. The film's x for focus index f is 535 − 228·f.
+  -->
+
+  <style>
+    .film {
+      transform: translateX(-149px); /* focus 3, the resting frame for reduced motion */
+      animation: roll 12.8s cubic-bezier(.4, .82, .32, 1) infinite;
+    }
+    /* Roll focus 1 → 5 → 1, one frame per 1.6 s: hold, then a 0.64 s move. */
+    @keyframes roll {
+      0%, 7.5%, 100% { transform: translateX(307px); }
+      12.5%, 20%, 87.5%, 95% { transform: translateX(79px); }
+      25%, 32.5%, 75%, 82.5% { transform: translateX(-149px); }
+      37.5%, 45%, 62.5%, 70% { transform: translateX(-377px); }
+      50%, 57.5% { transform: translateX(-605px); }
+    }
+
+    /* Key caps light up as each move starts: L while rolling forward, H while rolling back. */
+    .press { opacity: 0; }
+    .press-l { animation: press-l 12.8s linear infinite; }
+    .press-h { animation: press-h 12.8s linear infinite; }
+    @keyframes press-l {
+      0%, 7%, 11%, 19.5%, 23.5%, 32%, 36%, 44.5%, 48.5%, 100% { opacity: 0; }
+      7.5%, 10.5%, 20%, 23%, 32.5%, 35.5%, 45%, 48% { opacity: 1; }
+    }
+    @keyframes press-h {
+      0%, 57%, 61%, 69.5%, 73.5%, 82%, 86%, 94.5%, 98.5%, 100% { opacity: 0; }
+      57.5%, 60.5%, 70%, 73%, 82.5%, 85.5%, 95%, 98% { opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .film, .press-l, .press-h { animation: none; }
+    }
+
+    text { font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif; }
+    .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .gate-label { font-size: 12px; font-weight: 600; letter-spacing: .13em; }
+    .tile-title { font-size: 12px; font-weight: 600; fill: #cfcfd8; }
+    .tile-glyph { font-size: 58px; font-weight: 800; opacity: .18; }
+  </style>
+
+  <defs>
+    <radialGradient id="bg-glow" cx="50%" cy="0%" r="90%">
+      <stop offset="0" stop-color="#15161f"/>
+      <stop offset=".6" stop-color="#0b0b11"/>
+    </radialGradient>
+    <pattern id="dots" width="34" height="34" patternUnits="userSpaceOnUse">
+      <circle cx="17" cy="17" r="1" fill="#fff" fill-opacity=".045"/>
+    </pattern>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9cc0ff"/>
+      <stop offset="1" stop-color="#b58cf2"/>
+    </linearGradient>
+    <linearGradient id="fade-left" x1="0" x2="1">
+      <stop offset="0" stop-color="#0b0b11"/>
+      <stop offset="1" stop-color="#0b0b11" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="fade-right" x1="1" x2="0">
+      <stop offset="0" stop-color="#0b0b11"/>
+      <stop offset="1" stop-color="#0b0b11" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="sprocket" width="24" height="14" patternUnits="userSpaceOnUse">
+      <rect x="9" width="15" height="14" fill="#23232c"/>
+    </pattern>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <clipPath id="tile-clip"><rect width="210" height="158" rx="12"/></clipPath>
+    <clipPath id="banner-clip"><rect width="1280" height="480" rx="24"/></clipPath>
+
+    <!-- Window chrome shared by every tile; each tile adds its accent, title and glyph. -->
+    <g id="tile-chrome">
+      <rect width="210" height="158" rx="12" fill="#191920"/>
+      <g clip-path="url(#tile-clip)">
+        <rect width="210" height="26" fill="#23232b"/>
+      </g>
+      <circle cx="15" cy="13" r="4" fill="#ff5f57"/>
+      <circle cx="29" cy="13" r="4" fill="#febc2e"/>
+      <circle cx="43" cy="13" r="4" fill="#28c840"/>
+      <rect x="14" y="44" width="182" height="9" rx="4.5" fill="#fff" fill-opacity=".1"/>
+      <rect x="14" y="62" width="150" height="9" rx="4.5" fill="#fff" fill-opacity=".06"/>
+      <rect x=".5" y=".5" width="209" height="157" rx="11.5" fill="none" stroke="#fff" stroke-opacity=".08"/>
+    </g>
+  </defs>
+
+  <g clip-path="url(#banner-clip)">
+    <!-- Background -->
+    <rect width="1280" height="480" fill="#0b0b11"/>
+    <rect width="1280" height="480" fill="url(#bg-glow)"/>
+    <rect width="1280" height="480" fill="url(#dots)"/>
+
+    <!-- Wordmark + headline -->
+    <rect x="48" y="38" width="18" height="18" rx="5" fill="url(#brand)"/>
+    <text x="78" y="53" font-size="19" font-weight="700" fill="#eaeaf0">Strip</text>
+    <text x="1232" y="53" font-size="15" fill="#6a6a76" text-anchor="end">a window manager for macOS</text>
+    <text x="640" y="112" font-size="46" font-weight="800" fill="#f4f4f8" text-anchor="middle"
+          letter-spacing="-.9">Pin the view. Roll the windows.</text>
+    <text x="640" y="148" font-size="18" fill="#9a9aa6" text-anchor="middle">The center slot never moves — the windows roll past it.</text>
+
+    <!-- The film: sprockets + seven windows, rolled by the .film animation. Film top is y=212. -->
+    <g transform="translate(0 212)">
+      <g class="film">
+        <rect x="-456" y="-22" width="2508" height="14" rx="3" fill="url(#sprocket)" opacity=".85"/>
+        <rect x="-456" y="166" width="2508" height="14" rx="3" fill="url(#sprocket)" opacity=".85"/>
+
+        <g transform="translate(0 0)">
+          <use href="#tile-chrome" xlink:href="#tile-chrome"/>
+          <rect y="26" width="210" height="3" fill="#7aa2f7"/>
+          <text class="tile-title" x="55" y="17">Editor</text>
+          <text class="tile-glyph" x="196" y="148" text-anchor="end" fill="#7aa2f7">E</text>
+        </g>
+        <g transform="translate(228 0)">
+          <use href="#tile-chrome" xlink:href="#tile-chrome"/>
+          <rect y="26" width="210" height="3" fill="#41d18f"/>
+          <text class="tile-title" x="55" y="17">Terminal</text>
+          <text class="tile-glyph" x="196" y="148" text-anchor="end" fill="#41d18f">T</text>
+        </g>
+        <g transform="translate(456 0)">
+          <use href="#tile-chrome" xlink:href="#tile-chrome"/>
+          <rect y="26" width="210" height="3" fill="#5b9dff"/>
+          <text class="tile-title" x="55" y="17">Browser</text>
+          <text class="tile-glyph" x="196" y="148" text-anchor="end" fill="#5b9dff">B</text>
+        </g>
+        <g transform="translate(684 0)">
+          <use href="#tile-chrome" xlink:href="#tile-chrome"/>
+          <rect y="26" width="210" height="3" fill="#b58cf2"/>
+          <text class="tile-title" x="55" y="17">Chat</text>
+          <text class="tile-glyph" x="196" y="148" text-anchor="end" fill="#b58cf2">C</text>
+        </g>
+        <g transform="translate(912 0)">
+          <use href="#tile-chrome" xlink:href="#tile-chrome"/>
+          <rect y="26" width="210" height="3" fill="#f0a35e"/>
+          <text class="tile-title" x="55" y="17">Mail</text>
+          <text class="tile-glyph" x="196" y="148" text-anchor="end" fill="#f0a35e">@</text>
+        </g>
+        <g transform="translate(1140 0)">
+          <use href="#tile-chrome" xlink:href="#tile-chrome"/>
+          <rect y="26" width="210" height="3" fill="#ff7a90"/>
+          <text class="tile-title" x="55" y="17">Music</text>
+          <text class="tile-glyph" x="196" y="148" text-anchor="end" fill="#ff7a90">♪</text>
+        </g>
+        <g transform="translate(1368 0)">
+          <use href="#tile-chrome" xlink:href="#tile-chrome"/>
+          <rect y="26" width="210" height="3" fill="#5fc9a0"/>
+          <text class="tile-title" x="55" y="17">Calendar</text>
+          <text class="tile-glyph" x="196" y="148" text-anchor="end" fill="#5fc9a0">#</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- Dim everything outside the three gates (evenodd punches the gates out). -->
+    <path fill="#0b0b11" fill-opacity=".6" fill-rule="evenodd"
+          d="M0 180H1280V404H0Z M299 204h226v174h-226Z M527 204h226v174h-226Z M755 204h226v174h-226Z"/>
+    <rect x="0" y="180" width="200" height="224" fill="url(#fade-left)"/>
+    <rect x="1080" y="180" width="200" height="224" fill="url(#fade-right)"/>
+
+    <!-- Gates: the fixed slots. Center is solid and glowing; the sides are context. -->
+    <rect x="527" y="204" width="226" height="174" rx="15" fill="none" stroke="#7aa0ff"
+          stroke-width="6" opacity=".45" filter="url(#glow)"/>
+    <rect x="527" y="204" width="226" height="174" rx="15" fill="none" stroke="#9cc0ff" stroke-width="2.5"/>
+    <rect x="299" y="204" width="226" height="174" rx="15" fill="none" stroke="#fff"
+          stroke-opacity=".28" stroke-width="2" stroke-dasharray="7 6"/>
+    <rect x="755" y="204" width="226" height="174" rx="15" fill="none" stroke="#fff"
+          stroke-opacity=".28" stroke-width="2" stroke-dasharray="7 6"/>
+    <text class="gate-label" x="640" y="190" text-anchor="middle" fill="#bcd4ff">CENTER · FIXED</text>
+    <text class="gate-label" x="412" y="190" text-anchor="middle" fill="#fff" fill-opacity=".55">CONTEXT</text>
+    <text class="gate-label" x="868" y="190" text-anchor="middle" fill="#fff" fill-opacity=".55">CONTEXT</text>
+
+    <!-- Key caps: ⌃⌥ H / L roll the film. -->
+    <g transform="translate(-35 414)">
+      <rect x="446" width="56" height="36" rx="9" fill="#fff" fill-opacity=".05" stroke="#fff" stroke-opacity=".14"/>
+      <text class="mono" x="474" y="24" font-size="15" font-weight="700" fill="#9a9aa6" text-anchor="middle">⌃⌥</text>
+
+      <rect x="512" width="40" height="36" rx="9" fill="#fff" fill-opacity=".08" stroke="#fff" stroke-opacity=".18"/>
+      <rect class="press press-h" x="512" width="40" height="36" rx="9" fill="#b58cf2"/>
+      <text class="mono" x="532" y="24" font-size="15" font-weight="700" fill="#e8e8ee" text-anchor="middle">H</text>
+
+      <rect x="560" width="40" height="36" rx="9" fill="#fff" fill-opacity=".08" stroke="#fff" stroke-opacity=".18"/>
+      <rect class="press press-l" x="560" width="40" height="36" rx="9" fill="#b58cf2"/>
+      <text class="mono" x="580" y="24" font-size="15" font-weight="700" fill="#e8e8ee" text-anchor="middle">L</text>
+
+      <text x="616" y="23" font-size="14" fill="#7d7d8a">roll the film · focus always lands in the center</text>
+    </g>
+  </g>
+</svg>
