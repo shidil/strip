@@ -324,6 +324,12 @@ public final class WindowObserver {
         watch(window: element, id: id, pid: pid)
     }
 
+    /// Watch a window Strip adopted itself (`StripController.onAdoptWindow`) — one that posted no
+    /// `kAXWindowCreated` and whose focus notification was suppressed. Main thread.
+    public func watch(adopted window: AXWindow, id: CGWindowID) {
+        watch(window: window.element, id: id, pid: window.pid)
+    }
+
     /// Add the per-window notifications to `element` unless window `id` is already watched.
     private func watch(window element: AXUIElement, id: CGWindowID, pid: pid_t) {
         guard let observer = observers[pid] else { return }

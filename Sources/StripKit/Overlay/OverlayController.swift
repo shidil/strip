@@ -100,6 +100,10 @@ public final class OverlayController {
     /// (`StripController.centerTab`, which orders the press on the app's AX queue).
     public var onCenterTab: ((CGWindowID, @escaping () -> Void) -> Void)?
 
+    /// Switch to an AppKit native tab and center the window it shows (a different window id). Set by
+    /// `AppDelegate` (`StripController.centerNativeTab`).
+    public var onCenterNativeTab: ((CGWindowID, @escaping () -> ShownTabWindow?) -> Void)?
+
     /// Defer `work` until window `id`'s app isn't mid-motion (Enhanced UI suppressed hides tab bars from
     /// AX). Set by `AppDelegate` (`StripController.whenAXSettled`).
     public var whenAXSettled: ((CGWindowID, @escaping () -> Void) -> Void)?
@@ -518,8 +522,12 @@ public final class OverlayController {
     /// Press whatever tabs `peekPresses` says, then re-capture each touched window so its card shows
     /// the tab now visible. Main thread.
     private func applyPeek(selected: SearchTarget?) {
+        applyPresses(peekPresses(selected: selected, shown: peekShown, original: search.originalTabs))
+    }
+
+    /// Press each window's tab in `presses` (window → tab index) and re-capture it. Main thread.
+    private func applyPresses(_ presses: [CGWindowID: Int]) {
         let original = search.originalTabs
-        let presses = peekPresses(selected: selected, shown: peekShown, original: original)
         for (window, index) in presses {
             guard let tab = search.tabs[window].flatMap({ $0.indices.contains(index) ? $0[index] : nil }) else { continue }
             onPressTab?(window) { tab.press() }
@@ -548,11 +556,15 @@ public final class OverlayController {
                  + "qlen=\(search.query.count) results=\(search.results.count)")
         searchPicked = true
         peekWork?.cancel()
-        // Put back every *other* peeked window; the picked tab itself stays (centerTab presses it).
-        applyPeek(selected: target.isTab ? target : nil)
+        // Put back every *other* peeked window; the picked tab is pressed once, below.
+        applyPresses(pickRestores(picked: target, shown: peekShown, original: search.originalTabs))
         if case .tab(let id, let index) = target, let tabs = search.tabs[id], tabs.indices.contains(index) {
             let tab = tabs[index]
-            onCenterTab?(id) { tab.press() }
+            if tab.separateWindow {
+                onCenterNativeTab?(id) { tab.pressShowingNativeTab() }
+            } else {
+                onCenterTab?(id) { tab.press() }
+            }
         } else {
             onCenter?(target.windowID)
         }

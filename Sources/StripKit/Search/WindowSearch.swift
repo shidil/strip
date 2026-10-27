@@ -242,6 +242,23 @@ public func peekPresses(selected: SearchTarget?, shown: [CGWindowID: Int],
     return out
 }
 
+/// After pressing an AppKit native tab in `barWindow`'s tab bar, is the app's focused window `focused`
+/// the window that tab shows? Only if it's neither the bar's own window (now hidden) nor the window
+/// that was focused before the press — the app may have had *another* window focused (a second tab
+/// group), which is not the tab we switched to. `focusedBefore` nil (unreadable) can't rule that out.
+public func isShownNativeTab(focused: CGWindowID, focusedBefore: CGWindowID?, barWindow: CGWindowID) -> Bool {
+    focused != barWindow && focused != focusedBefore
+}
+
+/// The tab presses a pick needs before going to `picked`: every peeked window goes back to its
+/// original tab — except the picked tab's own window, whose tab the pick itself presses (once; this
+/// used to press it a second time). A window pick restores its own window too.
+public func pickRestores(picked: SearchTarget, shown: [CGWindowID: Int],
+                         original: [CGWindowID: Int]) -> [CGWindowID: Int] {
+    guard case .tab(let w, _) = picked else { return peekPresses(selected: nil, shown: shown, original: original) }
+    return peekPresses(selected: nil, shown: shown.filter { $0.key != w }, original: original)
+}
+
 /// Which result a click on window `id`'s card (or rail chip) picks while searching: the selected
 /// result when it lives in that window — so clicking a card that shows a peeked tab lands on that
 /// tab, like ↩ — else that window's own row. nil when the window has neither (no query, or only

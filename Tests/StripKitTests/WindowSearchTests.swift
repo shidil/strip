@@ -251,6 +251,37 @@ final class WindowSearchTests: XCTestCase {
         XCTAssertEqual(peekPresses(selected: nil, shown: [:], original: [w1: 0]), [:])
     }
 
+    func testPickingATabPressesItOnlyOnceAndRestoresOthers() {
+        // Nothing peeked: the pick's own press is the only one (no extra "peek" press first).
+        XCTAssertEqual(pickRestores(picked: .tab(window: w1, index: 3), shown: [:], original: [w1: 0]), [:])
+        // w2 was peeked: it goes back; w1 (picked, peeked to another tab) is left to the pick.
+        XCTAssertEqual(pickRestores(picked: .tab(window: w1, index: 5), shown: [w1: 3, w2: 2],
+                                    original: [w1: 0, w2: 4]), [w2: 4])
+    }
+
+    func testPickingAWindowRestoresItsOwnPeekToo() {
+        XCTAssertEqual(pickRestores(picked: .window(w1), shown: [w1: 3, w2: 2], original: [w1: 0, w2: 4]),
+                       [w1: 0, w2: 4])
+    }
+
+    // MARK: isShownNativeTab
+
+    func testNativeTabSwitchFromTheFocusedGroupAcceptsTheNewWindow() {
+        XCTAssertTrue(isShownNativeTab(focused: 9, focusedBefore: w1, barWindow: w1))
+        XCTAssertFalse(isShownNativeTab(focused: w1, focusedBefore: w1, barWindow: w1)) // not switched yet
+    }
+
+    func testAnotherFocusedWindowIsNotTheSwitchedTab() {
+        // Window w2 (another tab group) was focused; the pick was in w1's bar. w2 is not the tab.
+        XCTAssertFalse(isShownNativeTab(focused: w2, focusedBefore: w2, barWindow: w1))
+        XCTAssertTrue(isShownNativeTab(focused: 9, focusedBefore: w2, barWindow: w1))
+    }
+
+    func testUnreadableFocusBeforeOnlyRulesOutTheBarWindow() {
+        XCTAssertTrue(isShownNativeTab(focused: 9, focusedBefore: nil, barWindow: w1))
+        XCTAssertFalse(isShownNativeTab(focused: w1, focusedBefore: nil, barWindow: w1))
+    }
+
     // MARK: clickedResult
 
     func testClickOnTheSelectedResultsWindowPicksTheSelectedResult() {

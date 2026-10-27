@@ -29,6 +29,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.onSearchActive = { [weak self] active in self?.hotkeys.setSearchActive(active) }
         overlay.windowLookup = { [weak self] id in self?.controller.axWindow(for: id) }
         overlay.onCenterTab = { [weak self] id, press in self?.controller.centerTab(id, press: press) }
+        overlay.onCenterNativeTab = { [weak self] id, press in self?.controller.centerNativeTab(id, press: press) }
         overlay.onPressTab = { [weak self] id, press in self?.controller.pressTab(id, press: press) }
         overlay.whenAXSettled = { [weak self] id, work in
             guard let self else { return work() }
@@ -43,6 +44,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         observer.onReconcile = { [weak self] in self?.controller.refreshAndApply() }
         // Perf 1.1: suppress the reconcile our own focus()-driven app activation would otherwise cause.
         controller.onWillActivate = { [weak self] pid in self?.observer.ignoreActivation(of: pid) }
+        controller.onAdoptWindow = { [weak self] ax, id in self?.observer.watch(adopted: ax, id: id) }
         // Perf 1.1 (second half): route a pure external activation/focus event to the lightweight path
         // — skip the full allWindows() sweep when the focused window is already managed.
         observer.onFocusActivation = { [weak self] pid, id in

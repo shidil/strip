@@ -500,8 +500,8 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
         0 after); then close a Firefox window and confirm exactly one reconcile line.
     - **Still open:** Enhanced UI is forced on for every app after any motion, whatever its prior
       state (pre-existing). Firefox tab discovery depends on that, so right after launch, before
-      any motion, Firefox may show no tabs. A native-tab pick centers the old (now hidden)
-      window id.
+      any motion, Firefox may show no tabs. ~~A native-tab pick centers the old (now hidden)
+      window id.~~ Fixed 2026-10-27 (see "Merge-readiness fixes").
   - **Merge-readiness fixes (2026-10-27):**
     - **⌘Tab / ⌘` / ⌘Space close the Overview.** They passed through, but the tap kept capturing keys
       (search: into the hidden query; browse: h/j/k/l/↩/Esc/Space), so typing in the app you switched
@@ -544,6 +544,27 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
       wall clock around the AX calls (`search: tab press …`), user-run, three builds of one tree.
       Not measured: whether a pick's re-center starts sooner (its frame writes queue behind the
       press on the same per-pid queue).
+    - **Native-tab picks land on the picked tab.** Root cause (window probe at 50 ms +
+      `/tmp/strip.log`): the press hid window A and showed tab window B (B focused ~35 ms later),
+      then `centerTab` centered and focused the hidden A, and Terminal switched back to A's tab ~200
+      ms later. Now `StripController.centerNativeTab` presses on the app's AX queue, then polls
+      `kAXFocusedWindow` for ≤300 ms for a window that is neither A nor the one focused before the
+      press (pure `isShownNativeTab`: another tab group may have been focused). B takes A's place
+      (`StripState.replaceWindow`: ring slot, center, pin; constraints moved; animator forgets A),
+      is registered with `WindowObserver` (`watch(adopted:)` — it posts no `kAXWindowCreated` and its
+      focus notification is suppressed), then centered. No `kAXWindows` enumeration; AX reads off-main.
+      - **Verified hands-on:** 16 of 17 native picks adopted the shown window in 1–42 ms, including
+        a pick in an unfocused second Terminal window; closing an adopted tab reconciled once.
+      - **1 of 17 fell back** (`no newly focused window within 300ms`, 21:48:30); the user re-picked
+        and it worked in 3 ms. Cause not determined. The timeout line now logs the focused-before and
+        last-seen ids. On fallback Strip centers A as before, which can show A's tab again.
+      - **Rare race:** if the press lands after the 0.2 s self-activation grace, a full reconcile
+        adopts B first via `newWindowPlacement` (ring position and pin differ); B is still centered.
+      - **Still not handled:** a native tab switched by clicking in Terminal takes the focus-path
+        fallback, so B is inserted per `newWindowPlacement` instead of taking A's slot.
+    - **Each tab pick pressed the tab twice.** The pick's restore went through `peekPresses`, which
+      also pressed the selected tab, then `centerTab` pressed it again. Pure `pickRestores` restores
+      only *other* windows now; one `tab press` line per pick, verified.
   - **Open questions:** filter vs dim the grid; type-to-search directly in Overview; empty query as a
     recent-windows switcher; panel size vs the card grid on a 1440 px display.
   - **Next phases (after feedback):** (a) verify Safari / Chromium / native tabs and add per-app

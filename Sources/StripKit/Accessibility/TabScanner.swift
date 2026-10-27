@@ -55,6 +55,57 @@ public struct WindowTab {
                  + "retry=\(retryErr.map { "\($0.rawValue)" } ?? "no-match") freshTabs=\(fresh.count) "
                  + String(format: "press=%.1fms total=%.1fms", (t1 - t0) * 1000, (t2 - t0) * 1000))
     }
+
+    /// Switch to this AppKit native tab and return the window now showing it. Each native tab is its
+    /// own NSWindow, so the switch swaps the on-screen window id: the old one is hidden, and focusing
+    /// it again would switch the tab right back. Polls the app's focused window until it's a window
+    /// that is neither this tab bar's nor the one focused before the press (`isShownNativeTab`; live:
+    /// ~35 ms after the press), up to `nativeTabSwitchWait`.
+    /// Synchronous AX; call off-main on the app's AX queue, like `press`. nil when no switch showed.
+    func pressShowingNativeTab() -> ShownTabWindow? {
+        if selected { return nil } // already showing: nothing switches, don't wait out the poll
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.5) // a hung app can't hold its queue for seconds
+        func focused() -> (AXUIElement, CGWindowID)? {
+            var ref: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &ref) == .success,
+                  let ref else { return nil }
+            let element = ref as! AXUIElement
+            return axWindowID(element).map { (element, $0) }
+        }
+        let before = focused()?.1
+        press()
+        let t0 = CFAbsoluteTimeGetCurrent()
+        var lastSeen: CGWindowID?
+        while CFAbsoluteTimeGetCurrent() - t0 < Self.nativeTabSwitchWait {
+            let now = focused()
+            lastSeen = now?.1
+            if let (element, id) = now,
+               isShownNativeTab(focused: id, focusedBefore: before, barWindow: windowID) {
+                let shown = AXWindow(element: element, pid: pid)
+                Log.line("search: native tab id=\(windowID) → \(id) after "
+                         + String(format: "%.0fms", (CFAbsoluteTimeGetCurrent() - t0) * 1000))
+                return ShownTabWindow(id: id, ax: shown, title: shown.title, frame: shown.frame)
+            }
+            usleep(10_000)
+        }
+        Log.line("search: native tab id=\(windowID) — no newly focused window within "
+                 + String(format: "%.0fms", Self.nativeTabSwitchWait * 1000)
+                 + " (focused before=\(before.map(String.init) ?? "?") last=\(lastSeen.map(String.init) ?? "?"))")
+        return nil
+    }
+
+    private static let nativeTabSwitchWait: CFAbsoluteTime = 0.3
+}
+
+/// The window a native tab switch put on screen (`WindowTab.pressShowingNativeTab`), with its title
+/// and frame read off-main so the main thread can adopt it without AX calls.
+public struct ShownTabWindow {
+    public let id: CGWindowID
+    public let ax: AXWindow
+    public let title: String?
+    public let frame: CGRect?
+
 }
 
 /// Discovers the tabs inside managed windows through the Accessibility tree — generic across any app
