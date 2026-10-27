@@ -166,6 +166,27 @@ final class WindowSearchTests: XCTestCase {
         XCTAssertNil(key(0x31, " ", command: true))              // ⌘Space (Spotlight) passes through
     }
 
+    func testSystemSwitchersPassThroughAndCloseTheOverview() {
+        XCTAssertTrue(systemPassThrough(keyCode: 0x30, command: true))   // ⌘Tab
+        XCTAssertTrue(systemPassThrough(keyCode: 0x32, command: true))   // ⌘`
+        XCTAssertTrue(systemPassThrough(keyCode: 0x31, command: true))   // ⌘Space
+        XCTAssertFalse(systemPassThrough(keyCode: 0x30, command: false)) // Tab is the next result
+        XCTAssertFalse(systemPassThrough(keyCode: 0x31, command: false)) // Space types / closes the grid
+        XCTAssertFalse(systemPassThrough(keyCode: 0x09, command: true))  // ⌘V pastes
+    }
+
+    /// No key may be both passed through (the Overview closes) and captured as search input.
+    func testPassThroughAndSearchCaptureNeverOverlap() {
+        for code in 0 ..< 0x80 {
+            for command in [false, true] {
+                let captured = searchKey(keyCode: code, shift: false, control: false, option: false,
+                                         command: command, chars: "x") != nil
+                XCTAssertNotEqual(systemPassThrough(keyCode: code, command: command), captured,
+                                  "keyCode \(code) command=\(command)")
+            }
+        }
+    }
+
     func testOnlyOverviewTogglingChordsActWhileSearching() {
         XCTAssertTrue(allowedWhileSearching(.toggleOverview))   // ⌃⌥Space closes
         XCTAssertTrue(allowedWhileSearching(.toggleSearch))     // ⌃⌥F closes
@@ -228,6 +249,27 @@ final class WindowSearchTests: XCTestCase {
     func testCloseRestoresEverything() {
         XCTAssertEqual(peekPresses(selected: nil, shown: [w1: 3, w2: 2], original: [w1: 0, w2: 4]), [w1: 0, w2: 4])
         XCTAssertEqual(peekPresses(selected: nil, shown: [:], original: [w1: 0]), [:])
+    }
+
+    // MARK: clickedResult
+
+    func testClickOnTheSelectedResultsWindowPicksTheSelectedResult() {
+        // A peeked tab is selected: clicking its card lands on that tab, not the window row.
+        let targets: [SearchTarget] = [.window(w1), .tab(window: w1, index: 2), .window(w2)]
+        XCTAssertEqual(clickedResult(window: w1, selected: 1, targets: targets), 1)
+    }
+
+    func testClickOnAnotherWindowPicksItsOwnRow() {
+        let targets: [SearchTarget] = [.tab(window: w1, index: 2), .tab(window: w2, index: 0), .window(w2)]
+        XCTAssertEqual(clickedResult(window: w2, selected: 0, targets: targets), 2)
+    }
+
+    func testClickOnAWindowWithoutItsOwnRowPicksNothing() {
+        // Only another tab of w2 matched: the click centers w2 as it is, it doesn't press that tab.
+        let targets: [SearchTarget] = [.window(w1), .tab(window: w2, index: 0)]
+        XCTAssertNil(clickedResult(window: w2, selected: 0, targets: targets))
+        XCTAssertNil(clickedResult(window: w1, selected: 0, targets: []))         // empty query
+        XCTAssertEqual(clickedResult(window: w1, selected: 9, targets: targets), 0) // stale selection
     }
 
     // MARK: pickTabGroup

@@ -333,12 +333,8 @@ public final class OverlayController {
     /// Clicking a card centers that window (`onCenter`) and dismisses. No-op until a snapshot exists.
     public func toggleOverview() {
         onMain {
-            if let panel = self.overviewPanel {
-                self.endSearch(reason: self.searchPicked ? "pick" : "close")
-                panel.orderOut(nil)
-                self.overviewPanel = nil
-                self.onOverviewVisibility?(false)
-                Log.line("overview: closed")
+            if self.overviewPanel != nil {
+                self.closeOverview(reason: self.searchPicked ? "pick" : "close")
                 return
             }
             guard let snapshot = self.lastSnapshot,
@@ -361,6 +357,48 @@ public final class OverlayController {
             self.overviewPanel = panel
             self.loadThumbnails(for: snapshot)
         }
+    }
+
+    /// Close the Overview if it's open — ⌘Tab / ⌘` / ⌘Space passed through to the system (`reason`
+    /// "left"). Leaving isn't a pick, so any peeked tab is restored.
+    public func dismissOverview(reason: String) {
+        onMain {
+            guard self.overviewPanel != nil else { return }
+            self.closeOverview(reason: reason)
+        }
+    }
+
+    /// Hide the Overview panel, ending any search session with `reason`. Main thread.
+    private func closeOverview(reason: String) {
+        guard let panel = overviewPanel else { return }
+        endSearch(reason: reason)
+        panel.orderOut(nil)
+        overviewPanel = nil
+        onOverviewVisibility?(false)
+        Log.line("overview: closed (\(reason))")
+    }
+
+    /// A card or rail-chip click: center that window and close. While searching the click is a pick
+    /// and goes through `pickSearchResult` (`clickedResult` says which row), so a peeked tab is kept
+    /// rather than restored and the session logs `pick`, not `close`. Main thread.
+    private func openFromClick(_ id: CGWindowID) {
+        guard overviewPanel != nil else { return }
+        if search.active {
+            let targets = search.results.map(\.candidate.target)
+            if let i = clickedResult(window: id, selected: search.selected, targets: targets) {
+                pickSearchResult(i, via: "click")
+                return
+            }
+            // No row for this window: center it as it is. Still a pick (rank -1), and any peeked
+            // tab — necessarily in another window — goes back.
+            Log.line("search: pick kind=window rank=-1 via=click qlen=\(search.query.count) "
+                     + "results=\(search.results.count)")
+            searchPicked = true
+            peekWork?.cancel()
+            applyPeek(selected: nil)
+        }
+        onCenter?(id)
+        toggleOverview()
     }
 
     /// Kick off thumbnail capture for the windows in `snapshot`. If Screen Recording isn't granted
@@ -443,7 +481,7 @@ public final class OverlayController {
             case .down:
                 self.search.moveSelection(1)
             case .confirm:
-                self.pickSearchResult(self.search.selected)
+                self.pickSearchResult(self.search.selected, via: "key")
             case .escape:
                 if self.search.query.isEmpty { self.toggleOverview() } else { self.search.setQuery("") }
             case .paste:
@@ -502,10 +540,11 @@ public final class OverlayController {
     }
 
     /// Go to result `i`: switch to its tab (if it's a tab hit), center its window, close the Overview.
-    private func pickSearchResult(_ i: Int) {
+    /// `via` is how it was picked (key, click, row) — for the feedback log.
+    private func pickSearchResult(_ i: Int, via: String) {
         guard search.results.indices.contains(i) else { return }
         let target = search.results[i].candidate.target
-        Log.line("search: pick kind=\(target.isTab ? "tab" : "window") rank=\(i) "
+        Log.line("search: pick kind=\(target.isTab ? "tab" : "window") rank=\(i) via=\(via) "
                  + "qlen=\(search.query.count) results=\(search.results.count)")
         searchPicked = true
         peekWork?.cancel()
@@ -592,9 +631,9 @@ public final class OverlayController {
                 thumbnails: thumbnails,
                 selection: overviewSelection,
                 search: search,
-                onCenter: { [weak self] id in self?.onCenter?(id) },
+                onOpen: { [weak self] id in self?.onMain { self?.openFromClick(id) } },
                 onClose: { [weak self] in self?.toggleOverview() },
-                onPick: { [weak self] i in self?.onMain { self?.pickSearchResult(i) } }
+                onPick: { [weak self] i in self?.onMain { self?.pickSearchResult(i, via: "row") } }
             )
         )
         // Update the existing hosting view in place: replacing it on every snapshot (any re-tile while

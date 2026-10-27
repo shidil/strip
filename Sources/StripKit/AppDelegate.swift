@@ -73,7 +73,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // Any explicit layout/navigation command resumes management first; overlay-only keys don't,
         // so you can pop up help/Overview without un-suspending.
         switch command {
-        case .toggleHelp, .toggleOverview, .overview, .toggleSearch, .beginSearch, .search: break
+        case .toggleHelp, .toggleOverview, .overview, .toggleSearch, .beginSearch, .search, .dismissOverview: break
         default: controller.resumeIfSuspended()
         }
         switch command {
@@ -108,6 +108,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         case .toggleSearch: overlay.toggleSearch()
         case .beginSearch: overlay.beginSearch()
         case .search(let key): overlay.handleSearchKey(key)
+        case .dismissOverview: overlay.dismissOverview(reason: "left")
         }
     }
 

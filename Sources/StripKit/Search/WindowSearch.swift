@@ -242,6 +242,15 @@ public func peekPresses(selected: SearchTarget?, shown: [CGWindowID: Int],
     return out
 }
 
+/// Which result a click on window `id`'s card (or rail chip) picks while searching: the selected
+/// result when it lives in that window — so clicking a card that shows a peeked tab lands on that
+/// tab, like ↩ — else that window's own row. nil when the window has neither (no query, or only
+/// other tabs of it matched): the click just centers the window as it was.
+public func clickedResult(window id: CGWindowID, selected: Int, targets: [SearchTarget]) -> Int? {
+    if targets.indices.contains(selected), targets[selected].windowID == id { return selected }
+    return targets.firstIndex(of: .window(id))
+}
+
 /// Which of a window's AX tab groups is its real tab bar. A window can expose more than one
 /// `AXTabGroup` — Firefox's sidebar ("Bookmarks", "History", "Customize sidebar") is a second one
 /// with identical roles/subroles. The real tab bar is the group whose **selected tab's title matches

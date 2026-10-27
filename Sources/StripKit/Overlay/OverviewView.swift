@@ -24,7 +24,9 @@ struct OverviewView: View {
     /// Search state (⌃⌥F or `/`): while a query is typed the grid shows only matching windows, best
     /// match first, and the card holding the selected hit gets the selection halo.
     @ObservedObject var search: SearchModel
-    let onCenter: (CGWindowID) -> Void
+    /// Center this window and close (card or rail-chip click). The controller decides what that
+    /// means mid-search — a pick, which keeps a peeked tab.
+    let onOpen: (CGWindowID) -> Void
     let onClose: () -> Void
     /// Pick search result `i` (click on a result row).
     let onPick: (Int) -> Void
@@ -96,7 +98,7 @@ struct OverviewView: View {
                                                          ? item.id == search.selectedWindowID
                                                          : !search.active && flat == selection.index)
                                             .contentShape(Rectangle())
-                                            .onTapGesture { onCenter(item.id); onClose() }
+                                            .onTapGesture { onOpen(item.id) }
                                     }
                                 }
                                 .frame(maxWidth: .infinity) // each row spans full width → cards center
@@ -114,7 +116,7 @@ struct OverviewView: View {
             // The live film rail, pinned bottom-center — the same chrome that floats over the managed
             // windows, mirrored inside the overview so the strip stays visible (the overview panel
             // otherwise covers the rail's own lower-level panel). Clicking a chip centers + dismisses.
-            FilmRailView(items: items, onTap: { id in onCenter(id); onClose() }, onOverview: onClose)
+            FilmRailView(items: items, onTap: onOpen, onOverview: onClose)
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .padding(.bottom, 24)
         }

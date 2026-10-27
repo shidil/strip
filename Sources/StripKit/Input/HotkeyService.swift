@@ -24,6 +24,7 @@ public enum HotkeyCommand {
     case overview(OverviewKey)         // arrows / h j k l / Enter / Esc — only while overview is open
     case beginSearch                   // /   (chordless, Overview open) — switch the Overview into search
     case search(SearchKey)             // typing while the Overview is searching
+    case dismissOverview               // ⌘Tab / ⌘` / ⌘Space while the Overview is open — not consumed
 }
 
 /// Keys that drive the Overview while it's open. Unlike every other command these need **no** ⌃⌥
@@ -35,8 +36,9 @@ public enum OverviewKey {
 }
 
 /// Keys that drive the Overview's search field. While searching, **every** keyDown is captured (so
-/// typing never leaks into the focused app) — except ⌃⌥ chords (still strip commands) and the
-/// system-level ⌘Tab / ⌘` / ⌘Space (passed through).
+/// typing never leaks into the focused app) — except the ⌃⌥ chords that close or toggle the Overview
+/// (`allowedWhileSearching`) and the system-level ⌘Tab / ⌘` / ⌘Space (`systemPassThrough`), which
+/// pass through and close the Overview.
 public enum SearchKey: Equatable {
     case edit(QueryEdit)
     case up, down                      // ↑↓, ⇧Tab/Tab, ⌃P/⌃N, ⌃K/⌃J → move the result selection
@@ -106,9 +108,18 @@ public final class HotkeyService {
     }
 
     /// Returns the command for a keyDown event if it matches our chord, else nil (pass through).
+    /// Every command consumes its event except `.dismissOverview`.
     fileprivate func command(for event: CGEvent) -> HotkeyCommand? {
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
+        // ⌘Tab / ⌘` / ⌘Space leave the Overview for another app (or Spotlight). Let them through and
+        // close it — drop both flags right here so the very next keystroke already reaches that app
+        // instead of the hidden search field or the browse grid's h/j/k/l/Space.
+        if overviewOpen, systemPassThrough(keyCode: keyCode, command: flags.contains(.maskCommand)) {
+            overviewOpen = false
+            searchActive = false
+            return .dismissOverview
+        }
         // While searching, plain keys are text for the search field. Of the ⌃⌥ chords only the ones
         // that close or toggle the Overview work (`allowedWhileSearching`); the rest are swallowed —
         // otherwise ⌃⌥↩/⌃⌥J would drive the hidden *browse* grid, and ⌃⌥H/L re-tile mid-search.
@@ -209,14 +220,21 @@ func allowedWhileSearching(_ command: HotkeyCommand) -> Bool {
     }
 }
 
+/// ⌘Tab / ⌘` / ⌘Space: the system's app and window switchers and Spotlight. Never consumed while the
+/// Overview is open; they close it instead (`HotkeyCommand.dismissOverview`).
+func systemPassThrough(keyCode: Int, command: Bool) -> Bool {
+    command && [kVK_Tab, kVK_Space, kVK_ANSI_Grave].contains(keyCode)
+}
+
 /// Map a keyDown to a search-field action while the Overview is searching. `nil` means "not ours —
 /// pass the event through" (⌘ shortcuts we don't handle); everything else is consumed. Pure (takes the
 /// already-decoded modifiers and typed characters) so the mapping is unit-tested without a tap.
 func searchKey(keyCode: Int, shift: Bool, control: Bool, option: Bool, command: Bool,
                chars: String) -> SearchKey? {
     // ⌘Tab / ⌘` / ⌘Space stay system-level (app/window switching, Spotlight) — checked first so ⌘Tab
-    // isn't read as Tab (next result).
-    if command, [kVK_Tab, kVK_Space, kVK_ANSI_Grave].contains(keyCode) { return nil }
+    // isn't read as Tab (next result). The tap catches these before asking here; this keeps the
+    // mapping total on its own.
+    if systemPassThrough(keyCode: keyCode, command: command) { return nil }
     switch keyCode {
     case kVK_Return, kVK_KeypadEnter: return .confirm
     case kVK_Escape:    return .escape
@@ -288,6 +306,8 @@ private func hotkeyTapCallback(
     Signpost.log.emitEvent("chordLatency", "us=\(latencyUs)")
     let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
     DispatchQueue.main.async { service.onCommand?(command, repeated) }
+    // ⌘Tab / ⌘` / ⌘Space still reach the system; the command only closes the Overview.
+    if case .dismissOverview = command { return Unmanaged.passUnretained(event) }
     return nil // consume
 }
 

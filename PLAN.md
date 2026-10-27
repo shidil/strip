@@ -404,10 +404,12 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
        "Strip never takes focus" invariant; layout-correct via `keyboardGetUnicodeString`. Cost: no
        IME / dead-key composition. Fallback if needed: a key-capable non-activating panel with a real
        `NSTextField` (needs a spike: focus churn → `WindowObserver`, restoring key on close).
-    2. **Key conflicts:** while searching, *all* plain keys are text (h/j/k/l and Space type), ⌃⌥
-       chords still work, ⌘⌫ clears, ⌘V pastes, ⌘Tab/⌘`/⌘Space pass through, and every other ⌘
-       shortcut is swallowed (⌘W/⌘Q would hit the app *behind* the panel). Browse-mode hjkl
-       is untouched because search is entered explicitly (`/` or ⌃⌥F).
+    2. **Key conflicts:** while searching, *all* plain keys are text (h/j/k/l and Space type). Of the
+       ⌃⌥ chords only ⌃⌥Space / ⌃⌥F / ⌃⌥/ act (`allowedWhileSearching`); the rest are swallowed.
+       ⌘⌫ clears, ⌘V pastes, and every other ⌘ shortcut is swallowed (⌘W/⌘Q would hit the app
+       *behind* the panel). ⌘Tab/⌘`/⌘Space pass through **and close the Overview** (browse or search;
+       `systemPassThrough`, `search: end reason=left`). Browse-mode hjkl is untouched because search
+       is entered explicitly (`/` or ⌃⌥F).
     3. **Grid while searching = filter, not dim** (non-matching cards hidden, matches reordered by rank).
     4. **Matching:** fzf-style subsequence scoring per whitespace token; every token must hit the
        title, app name (×¾) or — for tabs — the parent window title (×⅓). Window +4 over an equal tab;
@@ -501,6 +503,19 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
       state (pre-existing). Firefox tab discovery depends on that, so right after launch, before
       any motion, Firefox may show no tabs. A native-tab pick centers the old (now hidden)
       window id.
+  - **Merge-readiness fixes (2026-10-27):**
+    - **⌘Tab / ⌘` / ⌘Space close the Overview.** They passed through, but the tap kept capturing keys
+      (search: into the hidden query; browse: h/j/k/l/↩/Esc/Space), so typing in the app you switched
+      to was lost until Esc. The tap now drops both flags on that keystroke (so the next key already
+      reaches the app) and posts `.dismissOverview`, which closes with `reason=left` and restores any
+      peeked tab. Chosen over closing on `didActivateApplication`: synchronous, and Strip's own tab
+      presses can activate the app (`pressTab` pre-suppresses that), which would close the Overview
+      mid-peek. Not covered: other activations (an app stealing focus, a notification click).
+    - **Card and rail-chip clicks while searching are picks.** They bypassed `pickSearchResult`, so
+      clicking a peeked tab's card restored the original tab and logged `close`. Now the pure
+      `clickedResult` picks the selected result if it's in that window (keeps the peeked tab, like ↩),
+      else the window's own row, else centers the window as-is (`rank=-1`). `search: pick` lines
+      carry `via=key|click|row`.
   - **Open questions:** filter vs dim the grid; type-to-search directly in Overview; empty query as a
     recent-windows switcher; panel size vs the card grid on a 1440 px display.
   - **Next phases (after feedback):** (a) verify Safari / Chromium / native tabs and add per-app
