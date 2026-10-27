@@ -101,6 +101,17 @@ public struct StripState {
         clampToValidSlots()
     }
 
+    /// Put window `new` exactly where `old` was — same ring position, center, and pin — and drop
+    /// `old`. For an AppKit native tab switch: each tab is its own window, so switching swaps which
+    /// window id is on screen while it stays the same pane to the user. No-op unless `old` is in the
+    /// ring and `new` isn't.
+    public mutating func replaceWindow(_ old: CGWindowID, with new: CGWindowID) {
+        guard let i = ring.firstIndex(of: old), !ring.contains(new) else { return }
+        ring[i] = new
+        if centerId == old { centerId = new }
+        if let slot = pins.first(where: { $0.value == old })?.key { pins[slot] = new }
+    }
+
     /// Absorb a freshly-discovered window into the film, positioned per `placement`. Pure (mutates
     /// only `self`) so the placement logic is unit-testable without AppKit/AX.
     ///

@@ -29,12 +29,48 @@ send_hotkey() {
     shorter) code=125; mods="control down, option down" ;;
     gapTighter) code=33; mods="control down, option down" ;;
     gapLooser) code=30; mods="control down, option down" ;;
+    toggleOverview) code=49; mods="control down, option down" ;;
+    toggleSearch) code=3; mods="control down, option down" ;;
     *)
       echo "send_hotkey: unknown command '$name'" >&2
       return 1
       ;;
   esac
   osascript -e "tell application \"System Events\" to key code $code using {$mods}" >/dev/null
+}
+
+# send_key <name> [modifiers] — one plain key, for the Overview and its search field (no ⌃⌥ chord).
+# Names map to kVK_* codes (HotkeyService.swift). Modifiers are System Events terms, comma-separated,
+# e.g. send_key tab "command down" for ⌘Tab.
+send_key() {
+  local name="$1" mods="${2:-}" code
+  case "$name" in
+    escape) code=53 ;;
+    return) code=36 ;;
+    delete) code=51 ;;
+    up) code=126 ;;
+    down) code=125 ;;
+    tab) code=48 ;;
+    space) code=49 ;;
+    slash) code=44 ;;
+    w) code=13 ;;
+    *)
+      echo "send_key: unknown key '$name'" >&2
+      return 1
+      ;;
+  esac
+  if [ -n "$mods" ]; then
+    osascript -e "tell application \"System Events\" to key code $code using {$mods}" >/dev/null
+  else
+    osascript -e "tell application \"System Events\" to key code $code" >/dev/null
+  fi
+}
+
+# type_text <text> — types plain text as real key events (System Events `keystroke`). Strip's search
+# field reads it through its event tap like hardware typing. ASCII only: the tap doesn't compose dead
+# keys or IME input.
+type_text() {
+  osascript -e "tell application \"System Events\" to keystroke \"$1\"" >/dev/null
 }
 
 # click_menu <top-level title> — clicks a top-level status-menu item (no submenu), e.g.

@@ -103,6 +103,35 @@ final class StripStateTests: XCTestCase {
         XCTAssertEqual(s.centerId, 3, "unknown id is a no-op")
     }
 
+    // MARK: - replaceWindow (native tab switch)
+
+    func testReplaceWindowTakesOverRingPositionAndCenter() {
+        var s = StripState(ring: ring, centerId: 3, cols: 3)
+        let before = assignment(s)
+        s.replaceWindow(3, with: 99)
+        XCTAssertEqual(s.ring, ring.map { $0 == 3 ? 99 : $0 })
+        XCTAssertEqual(s.centerId, 99)
+        XCTAssertEqual(assignment(s)[.C], 99, "the new window shows where the old one did")
+        XCTAssertEqual(assignment(s)[.L], before[.L])
+        XCTAssertEqual(assignment(s)[.R], before[.R])
+    }
+
+    func testReplaceWindowKeepsAPin() {
+        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, pins: [.L: 7])
+        s.replaceWindow(7, with: 99)
+        XCTAssertEqual(s.pins[.L], 99)
+        XCTAssertEqual(s.centerId, 3, "replacing a non-center window leaves the center alone")
+    }
+
+    func testReplaceWindowIgnoresUnknownOrAlreadyManaged() {
+        var s = StripState(ring: ring, centerId: 3, cols: 3)
+        s.replaceWindow(999, with: 98)
+        XCTAssertEqual(s.ring, ring, "unknown old id is a no-op")
+        s.replaceWindow(3, with: 5)
+        XCTAssertEqual(s.ring, ring, "a new id already in the ring would duplicate it — no-op")
+        XCTAssertEqual(s.centerId, 3)
+    }
+
     // MARK: - insertManaged (new-window placement, M6)
 
     func testNewWindowCentersAndTakesFocus() {

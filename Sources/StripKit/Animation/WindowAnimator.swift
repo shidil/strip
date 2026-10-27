@@ -40,6 +40,9 @@ public final class WindowAnimator: NSObject {
     private var inFlight: Set<CGWindowID> = []
     private var queues: [pid_t: DispatchQueue] = [:]
     private var suppressedApps: [pid_t: AXUIElement] = [:]
+    /// Work waiting for an app's Enhanced UI to come back on (`whenEnhancedUIRestored`), run on main
+    /// right after `stop()`'s restore lands on that app's AX queue.
+    private var afterRestore: [pid_t: [() -> Void]] = [:]
     private var failures = WriteFailureTracker()
 
     /// Until-when each window counts as "driven by us" (M7 respect-user-drags). Every frame we write
@@ -197,6 +200,21 @@ public final class WindowAnimator: NSObject {
         queue(for: ax.pid).async { ax.focusAttributes() }
     }
 
+    /// Run `work` on main once `pid`'s Enhanced UI is on: immediately when no motion is suppressing
+    /// it, else right after this motion's restore lands. Reading an app's AX tree mid-motion sees the
+    /// suppressed state — Firefox collapses to ~5 nodes with no tab bar while it's off (probed
+    /// 2026-10-26: 48 nodes / 11 tab buttons on, 5 / 0 off) — so tab scans wait on this.
+    public func whenEnhancedUIRestored(pid: pid_t, _ work: @escaping () -> Void) {
+        guard suppressedApps[pid] != nil else { work(); return }
+        afterRestore[pid, default: []].append(work)
+    }
+
+    /// Run arbitrary AX `work` for `pid` on that app's serial AX queue — ordered with its frame writes
+    /// and focus hand-off (used to press a tab picked in the Overview search before re-centering).
+    public func performAX(pid: pid_t, _ work: @escaping () -> Void) {
+        queue(for: pid).async(execute: work)
+    }
+
     /// Apply targets instantly with no animation (used when animation is disabled). `current` (the
     /// live seed) is unused on the snap path — windows jump straight to `frame`.
     public func snap(_ targets: [(ax: AXWindow, frame: CGRect, current: CGRect)]) {
@@ -232,6 +250,17 @@ public final class WindowAnimator: NSObject {
         // runs after that app's final frame write (FIFO) and never blocks the main thread.
         for (pid, appEl) in suppressedApps { queue(for: pid).async { EnhancedUI.set(true, on: appEl) } }
         suppressedApps.removeAll()
+        // Same FIFO queue as the restore, so waiting work only starts once the attribute is back on.
+        // Re-checked on main: if a new motion re-suppressed this app meanwhile, the work waits again.
+        for (pid, works) in afterRestore {
+            queue(for: pid).async {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return works.forEach { $0() } }
+                    works.forEach { self.whenEnhancedUIRestored(pid: pid, $0) }
+                }
+            }
+        }
+        afterRestore.removeAll()
         lastTimestamp = 0
     }
 

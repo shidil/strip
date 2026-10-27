@@ -27,7 +27,7 @@ checkpoint() {
 # Private: shared by wait_for_new_apply and wait_for_slotted_count below.
 _latest_apply_block_since() {
   local since="$1" total new_lines block expected actual
-  total=$(wc -l < "$STRIP_E2E_LOG" 2>/dev/null | tr -d ' ')
+  total=$({ wc -l < "$STRIP_E2E_LOG"; } 2>/dev/null | tr -d ' ')
   total=${total:-0}
   [ "$total" -gt "$since" ] || return 1
   new_lines=$(tail -n "+$((since + 1))" "$STRIP_E2E_LOG")
@@ -144,7 +144,7 @@ wait_for_line() {
   iterations=$(( timeout * 10 ))
   for ((i = 0; i < iterations; i++)); do
     local total
-    total=$(wc -l < "$STRIP_E2E_LOG" 2>/dev/null | tr -d ' ')
+    total=$({ wc -l < "$STRIP_E2E_LOG"; } 2>/dev/null | tr -d ' ')
     total=${total:-0}
     if [ "$total" -gt "$since" ]; then
       local match
@@ -209,7 +209,7 @@ parse_clamp_actual_for_app() {
   iterations=$(( timeout * 10 ))
   for ((i = 0; i < iterations; i++)); do
     local total
-    total=$(wc -l < "$STRIP_E2E_LOG" 2>/dev/null | tr -d ' ')
+    total=$({ wc -l < "$STRIP_E2E_LOG"; } 2>/dev/null | tr -d ' ')
     total=${total:-0}
     if [ "$total" -gt "$since" ]; then
       local line
@@ -255,5 +255,22 @@ assert_eq() {
     return 0
   fi
   echo "    ✗ $3: expected '$2', got '$1'" >&2
+  return 1
+}
+
+# wait_for_app_managed <appName> <since_line> [timeout_seconds] — polls until an apply block after
+# <since_line> lists <appName> in a slot (verbose lines), and prints that block. Stronger than a total
+# count when a scenario adds a window: a count can be met by some other window.
+wait_for_app_managed() {
+  local app="$1" since="$2" timeout="${3:-8}" iterations block
+  iterations=$(( timeout * 10 ))
+  for ((i = 0; i < iterations; i++)); do
+    if block=$(_latest_apply_block_since "$since") && grep -qE "[·●] $app +slot=" <<<"$block"; then
+      printf '%s\n' "$block"
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "TIMEOUT: $app never appeared in an apply block after line $since within ${timeout}s (log=$STRIP_E2E_LOG)" >&2
   return 1
 }

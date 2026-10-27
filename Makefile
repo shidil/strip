@@ -8,7 +8,7 @@ REQUIRE_SIGNING ?= 0
 CODESIGN_OPTIONS ?=
 DIST_DIR := .build/dist
 
-.PHONY: build bundle verify-bundle archive notarized-release ci run open profile test e2e e2e-vm clean setup-signing
+.PHONY: build bundle verify-bundle archive notarized-release ci run open profile test e2e e2e-vm e2e-vm-check clean setup-signing
 
 ## Compile the Swift package.
 build:
@@ -111,14 +111,19 @@ test:
 ## the mouse/keyboard while it runs. Kills any running Strip and needs a clean desktop (only its own
 ## fixture windows) — see TESTING.md.
 e2e: bundle
-	@bash scripts/e2e/run.sh
+	@E2E_ONLY="$(E2E_ONLY)" bash scripts/e2e/run.sh
 
 ## Same suite as `e2e`, but run inside an isolated Tart macOS VM instead of the real desktop — no
 ## clean-desktop precondition to maintain by hand. Needs one-time setup (scripts/e2e/vm/setup.sh,
 ## mostly manual) and the VM already running (`tart run strip-e2e` in its own terminal) — see
 ## TESTING.md's "Isolated runs via a Tart VM" section.
 e2e-vm: bundle
-	@bash scripts/e2e/vm/run.sh
+	@E2E_ONLY="$(E2E_ONLY)" bash scripts/e2e/vm/run.sh
+
+## Preflight the VM path without running the suite: VM up, guest signing identity, Strip's
+## Accessibility grant, Terminal's UI-scripting grants.
+e2e-vm-check: bundle
+	@bash scripts/e2e/vm/run.sh --check
 
 clean:
 	swift package clean

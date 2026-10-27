@@ -19,6 +19,8 @@ source "$E2E_DIR/lib/fixture.sh"
 source "$E2E_DIR/lib/driver.sh"
 # shellcheck source=scenarios.sh
 source "$E2E_DIR/scenarios.sh"
+# shellcheck source=search_scenarios.sh
+source "$E2E_DIR/search_scenarios.sh"
 
 SCENARIOS=(
   # constraint_learning runs FIRST deliberately: it converges every fixture window's learned size
@@ -39,7 +41,39 @@ SCENARIOS=(
   scenario_focus_ratio
   scenario_window_height
   scenario_gap_padding
+  # Overview search (search_scenarios.sh). The tab ones add and remove a 4th window — last.
+  scenario_search_open_close
+  scenario_search_slash_and_back_to_grid
+  scenario_search_editing_and_selection
+  scenario_search_type_and_pick
+  scenario_search_swallows_cmd_w
+  scenario_cmd_tab_leaves_overview
+  scenario_search_native_tab_pick
+  scenario_search_finder_tab_pick
+  scenario_search_chromium_tabs
+  scenario_search_safari_tabs
 )
+
+# Run a subset: `run.sh scenario_slide scenario_search_open_close` or E2E_ONLY="…" (space-separated;
+# `make e2e E2E_ONLY=…` / `make e2e-vm E2E_ONLY=…` pass it through). Unknown names fail fast. Order
+# follows the list above.
+only="${E2E_ONLY:-$*}"
+if [ -n "$only" ]; then
+  for name in $only; do
+    if ! printf '%s\n' "${SCENARIOS[@]}" | grep -qx "$name"; then
+      echo "✗ unknown scenario '$name'. Known: ${SCENARIOS[*]}" >&2
+      exit 2
+    fi
+  done
+  # scenario_constraint_learning always runs first: it settles the learned size constraints the
+  # other scenarios' apply-block waits assume (see the SCENARIOS comment).
+  selected=(scenario_constraint_learning)
+  for name in "${SCENARIOS[@]}"; do
+    [ "$name" == scenario_constraint_learning ] && continue
+    case " $only " in *" $name "*) selected+=("$name") ;; esac
+  done
+  SCENARIOS=("${selected[@]}")
+fi
 
 cleanup() {
   teardown_fixture

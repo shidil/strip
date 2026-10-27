@@ -20,7 +20,11 @@ public enum HotkeyCommand {
     case releaseAll                    // 0   release/suspend escape hatch (M7)
     case toggleOverview                // Space (M5)
     case toggleHelp                    // ?   (M4)
+    case toggleSearch                  // f   open the Overview straight into search (Spotlight-style)
     case overview(OverviewKey)         // arrows / h j k l / Enter / Esc — only while overview is open
+    case beginSearch                   // /   (chordless, Overview open) — switch the Overview into search
+    case search(SearchKey)             // typing while the Overview is searching
+    case dismissOverview               // ⌘Tab / ⌘` / ⌘Space while the Overview is open — not consumed
 }
 
 /// Keys that drive the Overview while it's open. Unlike every other command these need **no** ⌃⌥
@@ -29,6 +33,19 @@ public enum OverviewKey {
     case left, right, up, down         // arrows + vim h/l/k/j → move the selection (wraps)
     case confirm                       // Enter → center the selected window
     case close                         // Esc / Space → dismiss
+}
+
+/// Keys that drive the Overview's search field. While searching, **every** keyDown is captured (so
+/// typing never leaks into the focused app) — except the ⌃⌥ chords that close or toggle the Overview
+/// (`allowedWhileSearching`) and the system-level ⌘Tab / ⌘` / ⌘Space (`systemPassThrough`), which
+/// pass through and close the Overview.
+public enum SearchKey: Equatable {
+    case edit(QueryEdit)
+    case up, down                      // ↑↓, ⇧Tab/Tab, ⌃P/⌃N, ⌃K/⌃J → move the result selection
+    case confirm                       // Enter → go to the selected result
+    case escape                        // Esc → clear the query, or close when it's already empty
+    case paste                         // ⌘V → append the clipboard's first line
+    case ignore                        // captured but does nothing (←/→, F-keys, stray ⌃ combos)
 }
 
 /// A global keyboard tap (Quartz event tap) that recognizes ⌃⌥ + key and forwards strip commands.
@@ -49,11 +66,22 @@ public final class HotkeyService {
     /// While true, the Overview's plain navigation keys are recognized (no chord required) and
     /// consumed. Set on the main run loop (where the tap callback also runs), so no locking is needed.
     private var overviewOpen = false
+    /// While true (and the Overview is open), plain keys are search input. The tap flips this itself
+    /// on `/` and ⌃⌥F so the very next keystroke is already routed as text, before the main-queue hop
+    /// that tells the overlay; `setSearchActive` from the overlay is the source of truth after that.
+    private var searchActive = false
 
     public init() {}
 
-    /// Tell the tap whether the Overview is open, gating the chordless navigation keys.
-    public func setOverviewOpen(_ open: Bool) { overviewOpen = open }
+    /// Tell the tap whether the Overview is open, gating the chordless navigation keys. Closing the
+    /// Overview also ends search.
+    public func setOverviewOpen(_ open: Bool) {
+        overviewOpen = open
+        if !open { searchActive = false }
+    }
+
+    /// Tell the tap whether the Overview's search field is taking input.
+    public func setSearchActive(_ active: Bool) { searchActive = active }
 
     @discardableResult
     public func start() -> Bool {
@@ -80,18 +108,52 @@ public final class HotkeyService {
     }
 
     /// Returns the command for a keyDown event if it matches our chord, else nil (pass through).
+    /// Every command consumes its event except `.dismissOverview`.
     fileprivate func command(for event: CGEvent) -> HotkeyCommand? {
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        let flags = event.flags
+        // ⌘Tab / ⌘` / ⌘Space leave the Overview for another app (or Spotlight). Let them through and
+        // close it — drop both flags right here so the very next keystroke already reaches that app
+        // instead of the hidden search field or the browse grid's h/j/k/l/Space.
+        if overviewOpen, systemPassThrough(keyCode: keyCode, command: flags.contains(.maskCommand)) {
+            overviewOpen = false
+            searchActive = false
+            return .dismissOverview
+        }
+        // While searching, plain keys are text for the search field. Of the ⌃⌥ chords only the ones
+        // that close or toggle the Overview work (`allowedWhileSearching`); the rest are swallowed —
+        // otherwise ⌃⌥↩/⌃⌥J would drive the hidden *browse* grid, and ⌃⌥H/L re-tile mid-search.
+        if overviewOpen, searchActive, flags.contains(Self.chord), !flags.contains(.maskCommand) {
+            guard let cmd = chordCommand(keyCode: keyCode, shift: flags.contains(.maskShift)),
+                  allowedWhileSearching(cmd) else { return .search(.ignore) }
+            return cmd
+        }
+        if overviewOpen, searchActive {
+            return searchKey(keyCode: keyCode,
+                             shift: flags.contains(.maskShift),
+                             control: flags.contains(.maskControl),
+                             option: flags.contains(.maskAlternate),
+                             command: flags.contains(.maskCommand),
+                             chars: Self.typedCharacters(event)).map { .search($0) }
+        }
+        // `/` (unmodified) inside the Overview switches it into search mode.
+        if overviewOpen, keyCode == kVK_ANSI_Slash,
+           flags.intersection([.maskShift, .maskControl, .maskAlternate, .maskCommand]).isEmpty {
+            searchActive = true
+            return .beginSearch
+        }
         // While the Overview is open, its navigation keys are recognized chordlessly (and consumed).
         // Anything else falls through to the normal ⌃⌥ logic, so other commands and typing are intact.
         if overviewOpen, let key = Self.overviewKey(for: keyCode) { return .overview(key) }
 
-        let flags = event.flags
         guard flags.contains(Self.chord) else { return nil }
         // Disallow Command in the chord so app shortcuts (⌘…) are never shadowed.
         if flags.contains(.maskCommand) { return nil }
-        let shift = flags.contains(.maskShift)
+        return chordCommand(keyCode: keyCode, shift: flags.contains(.maskShift))
+    }
 
+    /// The strip command for a ⌃⌥ + `keyCode` chord, or nil.
+    private func chordCommand(keyCode: Int, shift: Bool) -> HotkeyCommand? {
         switch keyCode {
         case kVK_ANSI_H: return shift ? .movePrev : .slidePrev
         case kVK_ANSI_L: return shift ? .moveNext : .slideNext
@@ -113,8 +175,23 @@ public final class HotkeyService {
         case kVK_ANSI_0: return .releaseAll
         case kVK_Space:  return .toggleOverview
         case kVK_ANSI_Slash: return .toggleHelp   // ⌃⌥/  (the "?" key)
+        case kVK_ANSI_F:
+            // Opening (or switching) straight into search: route the next keystrokes as text right
+            // away. When it's a close instead, the overlay's visibility callback resets both flags.
+            if !(overviewOpen && searchActive) { overviewOpen = true; searchActive = true }
+            return .toggleSearch
         default: return nil
         }
+    }
+
+    /// The text a keyDown types under the current keyboard layout (respects ⇧ and the layout, unlike
+    /// the position-based keycode). Dead keys aren't composed — an event tap sees them raw.
+    private static func typedCharacters(_ event: CGEvent) -> String {
+        var length = 0
+        var buffer = [UniChar](repeating: 0, count: 8)
+        event.keyboardGetUnicodeString(maxStringLength: buffer.count, actualStringLength: &length,
+                                       unicodeString: &buffer)
+        return String(utf16CodeUnits: buffer, count: length)
     }
 
     /// Map a keycode to an Overview navigation key (arrows + vim h/j/k/l, Enter, Esc/Space), or nil.
@@ -131,6 +208,65 @@ public final class HotkeyService {
         default:                         return nil
         }
     }
+}
+
+/// The ⌃⌥ chords that still act while the Overview is searching: the ones that close or toggle it
+/// (and the help sheet). Everything else is swallowed so it can't drive the hidden browse grid or
+/// re-tile windows under an open search.
+func allowedWhileSearching(_ command: HotkeyCommand) -> Bool {
+    switch command {
+    case .toggleOverview, .toggleSearch, .toggleHelp: return true
+    default: return false
+    }
+}
+
+/// ⌘Tab / ⌘` / ⌘Space: the system's app and window switchers and Spotlight. Never consumed while the
+/// Overview is open; they close it instead (`HotkeyCommand.dismissOverview`).
+func systemPassThrough(keyCode: Int, command: Bool) -> Bool {
+    command && [kVK_Tab, kVK_Space, kVK_ANSI_Grave].contains(keyCode)
+}
+
+/// Map a keyDown to a search-field action while the Overview is searching. `nil` means "not ours —
+/// pass the event through" (⌘ shortcuts we don't handle); everything else is consumed. Pure (takes the
+/// already-decoded modifiers and typed characters) so the mapping is unit-tested without a tap.
+func searchKey(keyCode: Int, shift: Bool, control: Bool, option: Bool, command: Bool,
+               chars: String) -> SearchKey? {
+    // ⌘Tab / ⌘` / ⌘Space stay system-level (app/window switching, Spotlight) — checked first so ⌘Tab
+    // isn't read as Tab (next result). The tap catches these before asking here; this keeps the
+    // mapping total on its own.
+    if systemPassThrough(keyCode: keyCode, command: command) { return nil }
+    switch keyCode {
+    case kVK_Return, kVK_KeypadEnter: return .confirm
+    case kVK_Escape:    return .escape
+    case kVK_UpArrow:   return .up
+    case kVK_DownArrow: return .down
+    case kVK_Tab:       return shift ? .up : .down
+    case kVK_Delete:
+        if command { return .edit(.clear) }
+        if option || control { return .edit(.deleteWord) }
+        return .edit(.deleteBackward)
+    default: break
+    }
+    if command {
+        // Every other ⌘ shortcut is swallowed — ⌘W/⌘Q here would otherwise close or quit the app
+        // *behind* the search panel.
+        return keyCode == kVK_ANSI_V ? .paste : .ignore
+    }
+    if control {
+        switch keyCode {
+        case kVK_ANSI_P, kVK_ANSI_K: return .up
+        case kVK_ANSI_N, kVK_ANSI_J: return .down
+        case kVK_ANSI_U: return .edit(.clear)
+        case kVK_ANSI_W: return .edit(.deleteWord)
+        default: return .ignore
+        }
+    }
+    // Printable text only: drop control characters and the private-use range AppKit uses for
+    // function/arrow keys (U+F700–U+F8FF).
+    let printable = !chars.isEmpty && chars.unicodeScalars.allSatisfy {
+        !CharacterSet.controlCharacters.contains($0) && !(0xF700 ... 0xF8FF).contains($0.value)
+    }
+    return printable ? .edit(.insert(chars)) : .ignore
 }
 
 // MARK: - C callback
@@ -170,6 +306,8 @@ private func hotkeyTapCallback(
     Signpost.log.emitEvent("chordLatency", "us=\(latencyUs)")
     let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
     DispatchQueue.main.async { service.onCommand?(command, repeated) }
+    // ⌘Tab / ⌘` / ⌘Space still reach the system; the command only closes the Overview.
+    if case .dismissOverview = command { return Unmanaged.passUnretained(event) }
     return nil // consume
 }
 
@@ -180,6 +318,14 @@ private let kVK_ANSI_L = 0x25
 private let kVK_ANSI_J = 0x26
 private let kVK_ANSI_K = 0x28
 private let kVK_ANSI_P = 0x23
+private let kVK_ANSI_F = 0x03
+private let kVK_ANSI_N = 0x2D
+private let kVK_ANSI_U = 0x20
+private let kVK_ANSI_V = 0x09
+private let kVK_ANSI_W = 0x0D
+private let kVK_Delete = 0x33
+private let kVK_ANSI_Grave = 0x32
+private let kVK_KeypadEnter = 0x4C
 private let kVK_ANSI_E = 0x0E
 private let kVK_ANSI_T = 0x11
 private let kVK_ANSI_0 = 0x1D

@@ -1,13 +1,26 @@
 ---
 name: run-strip
-description: Launch Strip the trusted way (make open via LaunchServices, the only path that gets the Accessibility grant) and tail /tmp/strip.log to observe behavior. Use to run, restart, or watch the live app — never run the binary from a shell.
-disable-model-invocation: true
+description: Launch Strip the trusted way (make open via LaunchServices, the only path that gets the Accessibility grant) and read /tmp/strip.log to observe it. Use to watch the user's running Strip, or — only with the user's explicit OK — to restart it. To verify a change, prefer the e2e skill (make e2e-vm). Never run the binary from a shell.
 ---
 
 # run-strip
 
 Strip's run path is non-obvious (CLAUDE.md "Running it"). This skill captures the trusted launch +
 log-watch dance so it isn't gotten wrong.
+
+## The host Strip is the user's live window manager — ask before restarting it
+
+`make open` kills and relaunches the Strip that is managing the user's real windows, mid-work. On a
+fresh signature it also costs them a manual Accessibility (and Screen Recording) re-grant. So:
+
+- **Reading `/tmp/strip.log` is always fine** — it's the running instance's log.
+- **`make open` / `pkill Strip` on the host: only when the user has said yes for this launch.**
+- **To check that a change works, use the e2e skill (`make e2e-vm`)** — it runs a fresh build in an
+  isolated VM and never touches the host instance. Ask the user to hand-test only what the suite
+  can't drive (mouse hover, real browsers, visual polish) — see TESTING.md §2.
+- Builds made where the "Strip Dev" identity isn't visible (e.g. a sandboxed agent shell —
+  `security find-identity -p codesigning` shows 0) are **ad-hoc signed**: a new signature every build,
+  so a host launch of one invalidates the Accessibility grant. The user's own `make open` re-signs.
 
 ## Why not just run the binary
 

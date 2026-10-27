@@ -44,8 +44,10 @@ public final class WindowObserver {
 
     private let workspace = NSWorkspace.shared
     private var observers: [pid_t: AXObserver] = [:]
-    /// Window elements we've added move/resize notifications to, keyed by app, deduped by window id.
-    /// Rebuilt on each full re-enumeration so it stays bounded across long-lived apps.
+    /// Windows whose close we're watching (`kAXUIElementDestroyed` registered), keyed by app, deduped by
+    /// window id. Built at first attach (`watchAllWindows`), then grown by created/focused windows;
+    /// closed windows' ids linger until the app quits (a few bytes each). A window whose registration
+    /// failed is left out, so its next focus retries it.
     private var watchedWindows: [pid_t: Set<CGWindowID>] = [:]
     private var pending: DispatchWorkItem?
     private let debounceInterval: TimeInterval = 0.075
@@ -57,6 +59,9 @@ public final class WindowObserver {
     /// a burst can't downgrade a real membership change that arrived earlier. Reset on fire.
     private var pendingFullReconcile = false
     private var pendingFocusPID: pid_t?
+    /// What requested the pending full reconcile (deduped, capped), logged when it fires — so an
+    /// unexplained re-tile in `/tmp/strip.log` names its trigger (e.g. a tab switch's AX churn).
+    private var pendingReasons: [String] = []
 
     /// Per-window in-flight user gestures: id → did we see a resize (vs. a pure move). Flushed to
     /// `onUserDrag` once the gesture ends.
@@ -107,9 +112,10 @@ public final class WindowObserver {
 
     /// App-element notifications we subscribe to. Create/focus/main cover the common "window
     /// appeared / focus moved" cases; miniaturize covers windows leaving and rejoining the strip.
+    /// Not `kAXUIElementDestroyed`: on the app element it fires for *any* element the app tears down —
+    /// Firefox posts it on every tab switch — so each one ran a full reconcile (see `windowNotifications`).
     private static let notifications: [CFString] = [
         kAXWindowCreatedNotification as CFString,
-        kAXUIElementDestroyedNotification as CFString,
         kAXWindowMiniaturizedNotification as CFString,
         kAXWindowDeminiaturizedNotification as CFString,
         kAXFocusedWindowChangedNotification as CFString,
@@ -117,9 +123,13 @@ public final class WindowObserver {
     ]
 
     /// Per-window notifications, added to each window element rather than the app element.
+    /// `kAXUIElementDestroyed` lives here so only a real window close triggers a full reconcile.
+    /// Trade-off: a window we failed to watch (e.g. its id was unreadable at creation) only drops out
+    /// at the next reconcile some other event triggers.
     private static let windowNotifications: [CFString] = [
         kAXMovedNotification as CFString,
         kAXResizedNotification as CFString,
+        kAXUIElementDestroyedNotification as CFString,
     ]
 
     public init() {}
@@ -178,14 +188,14 @@ public final class WindowObserver {
             // them when they appear, and the reconcile below catches anything already present.
             attach(to: app)
         }
-        scheduleReconcile()
+        scheduleReconcile("app-launched")
     }
 
     @objc private func appTerminated(_ note: Notification) {
         if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
             detach(pid: app.processIdentifier)
         }
-        scheduleReconcile()
+        scheduleReconcile("app-terminated")
     }
 
     /// App hide/unhide: which windows are tileable changed, so take the full reconcile path.
@@ -193,7 +203,7 @@ public final class WindowObserver {
         if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
             attach(to: app)
         }
-        scheduleReconcile()
+        scheduleReconcile("app-hidden/unhidden")
     }
 
     /// App activation (Cmd-Tab / `open -a` of a running app): a *pure focus* event that changes no
@@ -201,7 +211,7 @@ public final class WindowObserver {
     /// sweep when the user merely switched apps (perf 1.1 second half).
     @objc private func appActivated(_ note: Notification) {
         guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
-            scheduleReconcile() // no app info → be safe, full reconcile
+            scheduleReconcile("activation-without-app") // no app info → be safe, full reconcile
             return
         }
         // Skip the activation Strip's own focus() caused: we triggered it and nothing changed.
@@ -263,7 +273,7 @@ public final class WindowObserver {
         case kAXWindowCreatedNotification:
             // The element delivered for a window-created notification *is* the new window.
             me.watch(window: element)
-            me.scheduleReconcile()
+            me.scheduleReconcile(WindowObserver.reason(name, element))
         default:
             // Everything else: focus/main-window-changed (pure focus) vs destroy/miniaturize
             // (membership). Route by classification.
@@ -272,17 +282,19 @@ public final class WindowObserver {
                 // Focused/main-window-changed posts on the app element. Drop the one Strip's own
                 // apply() induces for the pid we just activated; otherwise take the lightweight path.
                 var pid: pid_t = 0
-                guard AXUIElementGetPid(element, &pid) == .success else { me.scheduleReconcile(); return }
+                guard AXUIElementGetPid(element, &pid) == .success else {
+                    me.scheduleReconcile(WindowObserver.reason(name, element)); return
+                }
                 if me.isSelfInducedActivation(pid: pid, now: CACurrentMediaTime()) { return }
                 me.scheduleFocusReconcile(pid: pid)
             case .full:
                 // kAXUIElementDestroyed / kAXWindowMiniaturized / kAXWindowDeminiaturized — membership.
-                me.scheduleReconcile()
+                me.scheduleReconcile(WindowObserver.reason(name, element))
             }
         }
     }
 
-    /// Add move/resize notifications to every current window of `pid`, rebuilding the watched-id set.
+    /// Add the per-window notifications to every current window of `pid`, rebuilding the watched-id set.
     private func watchAllWindows(of pid: pid_t, with observer: AXObserver) {
         // This is a per-app `kAXWindows` copy on the main thread — the residual main-thread cost on
         // the activation path after perf 1.1 (it runs on every Cmd-Tab via the defensive re-attach).
@@ -297,24 +309,49 @@ public final class WindowObserver {
             return
         }
         var ids: Set<CGWindowID> = []
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
         for win in windows {
             guard let id = axWindowID(win) else { continue }
-            ids.insert(id)
-            for n in Self.windowNotifications { AXObserverAddNotification(observer, win, n, refcon) }
+            if addWindowNotifications(observer, win) { ids.insert(id) }
         }
         watchedWindows[pid] = ids
         sp.endInterval("watchWindows", watchState, "pid=\(pid) windows=\(ids.count)")
     }
 
-    /// Add move/resize notifications to a single freshly-created window element.
+    /// Add the per-window notifications to a single freshly-created window element.
     private func watch(window element: AXUIElement) {
         let pid = pidOf(element)
-        guard pid > 0, let observer = observers[pid], let id = axWindowID(element) else { return }
+        guard pid > 0, let id = axWindowID(element) else { return }
+        watch(window: element, id: id, pid: pid)
+    }
+
+    /// Watch a window Strip adopted itself (`StripController.onAdoptWindow`) — one that posted no
+    /// `kAXWindowCreated` and whose focus notification was suppressed. Main thread.
+    public func watch(adopted window: AXWindow, id: CGWindowID) {
+        watch(window: window.element, id: id, pid: window.pid)
+    }
+
+    /// Add the per-window notifications to `element` unless window `id` is already watched.
+    private func watch(window element: AXUIElement, id: CGWindowID, pid: pid_t) {
+        guard let observer = observers[pid] else { return }
         if watchedWindows[pid]?.contains(id) == true { return }
+        if addWindowNotifications(observer, element) { watchedWindows[pid, default: []].insert(id) }
+    }
+
+    /// Add the per-window notifications to `element`. Returns whether its close is now watched — only
+    /// then may the window count as watched: a window close reconciles through this one notification.
+    private func addWindowNotifications(_ observer: AXObserver, _ element: AXUIElement) -> Bool {
         let refcon = Unmanaged.passUnretained(self).toOpaque()
-        for n in Self.windowNotifications { AXObserverAddNotification(observer, element, n, refcon) }
-        watchedWindows[pid, default: []].insert(id)
+        var closeWatched = false
+        for n in Self.windowNotifications {
+            let err = AXObserverAddNotification(observer, element, n, refcon)
+            if (n as String) == kAXUIElementDestroyedNotification { closeWatched = Self.isRegistered(err) }
+        }
+        return closeWatched
+    }
+
+    /// Whether `AXObserverAddNotification`'s result means the notification will be delivered. Pure.
+    static func isRegistered(_ err: AXError) -> Bool {
+        err == .success || err == .notificationAlreadyRegistered
     }
 
     private func pidOf(_ element: AXUIElement) -> pid_t {
@@ -354,7 +391,7 @@ public final class WindowObserver {
             scheduleFlush(after: mouseUpSettle)
         } else if reconcileDeferred {
             reconcileDeferred = false
-            scheduleReconcile()
+            scheduleReconcile("deferred-during-drag")
         }
     }
 
@@ -403,10 +440,11 @@ public final class WindowObserver {
     }
 
     /// Request a **full** reconcile (membership may have changed). Sticky for the debounce window.
-    private func scheduleReconcile() {
+    private func scheduleReconcile(_ reason: String) {
         // Reconcile fire-rate: each emit is one (debounced) reconcile request. During a Cmd-Tab/
         // focus storm this rate is the R1 cost driver — Phase 1 (1.1) drops the no-op ones.
         Signpost.log.emitEvent("reconcile")
+        if pendingReasons.count < 6, !pendingReasons.contains(reason) { pendingReasons.append(reason) }
         pendingFullReconcile = true
         armDebounce()
     }
@@ -435,8 +473,11 @@ public final class WindowObserver {
         let action = Self.batchAction(sawMembership: pendingFullReconcile, focusPID: pendingFocusPID)
         pendingFullReconcile = false
         pendingFocusPID = nil
+        let reasons = pendingReasons
+        pendingReasons = []
         switch action {
         case .full:
+            Log.line("observer: full reconcile ← \(reasons.joined(separator: ", "))")
             onReconcile?()
         case .lightweight(let pid):
             // Cheap per-element read (main thread): one `kAXFocusedWindow` on a known app element —
@@ -447,12 +488,26 @@ public final class WindowObserver {
         }
     }
 
-    /// The `CGWindowID` of `pid`'s currently-focused window, or `nil` if unreadable.
+    /// "AXUIElementDestroyed(Firefox)" — a notification name plus its app, for the reconcile log.
+    /// (No AX read: a destroyed element can't answer, and this runs in the observer callback.)
+    fileprivate static func reason(_ name: String, _ element: AXUIElement) -> String {
+        var pid: pid_t = 0
+        let app = AXUIElementGetPid(element, &pid) == .success
+            ? NSRunningApplication(processIdentifier: pid)?.localizedName ?? "pid \(pid)" : "?"
+        return "\(name)(\(app))"
+    }
+
+    /// The `CGWindowID` of `pid`'s currently-focused window, or `nil` if unreadable. Also watches it:
+    /// a window that wasn't in `kAXWindows` at attach and never posted `kAXWindowCreated` (a hidden
+    /// native tab that's now shown) otherwise gets no `kAXUIElementDestroyed` when it closes.
     private func focusedWindowID(of pid: pid_t) -> CGWindowID? {
         let appElement = AXUIElementCreateApplication(pid)
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &ref) == .success,
               let ref else { return nil }
-        return axWindowID(ref as! AXUIElement)
+        let window = ref as! AXUIElement
+        guard let id = axWindowID(window) else { return nil }
+        watch(window: window, id: id, pid: pid)
+        return id
     }
 }

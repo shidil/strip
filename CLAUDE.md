@@ -24,11 +24,28 @@ make bundle          # build + assemble + sign .build/Strip.app
 make open            # bundle + launch via LaunchServices (the only TRUSTED run; see below)
 make run             # bundle + run inner binary — build-check only, NOT trusted
 make setup-signing   # one-time: create the stable "Strip Dev" code-signing identity
-make e2e             # AppKit/AX/menu smoke suite — needs Accessibility + a clean desktop; see TESTING.md
-make e2e-vm          # same suite, isolated in a Tart VM — no clean-desktop precondition; see TESTING.md
+make e2e             # AppKit/AX/menu smoke suite ON THE HOST — kills the user's Strip; ask first
+make e2e-vm          # same suite in the strip-e2e Tart VM — the default way to verify a change
+make e2e-vm E2E_ONLY="scenario_a scenario_b"   # a subset (constraint warm-up always runs)
+make e2e-vm-check    # preflight: VM running, guest signing identity, grants
 ```
 Single test: `swift test --filter StripLayoutTests/testRingWrapsAround` (or a whole suite:
 `swift test --filter StripLayoutTests`).
+
+## Verifying a change (default: the VM e2e suite)
+
+- **The host Strip is the user's live window manager.** Don't `make open`, `pkill Strip` or
+  `make e2e` on the host without the user's OK for that launch — it relaunches their WM mid-work and
+  can cost them a manual re-grant (see signing below).
+- **Verify with `make e2e-vm`** (the `e2e` skill): a fresh build in an isolated VM, re-signed in the
+  guest with a fixed identity so its grants survive rebuilds. Every behavior fix gets a scenario
+  (`scripts/e2e/scenarios.sh`, `search_scenarios.sh`); if the behavior isn't in the log, add a log
+  line first. If the VM isn't running, ask the user to `tart run strip-e2e` — don't fall back to
+  hand-testing.
+- **Ask the user to hand-test only what the suite can't drive** (TESTING.md §2: hover, card clicks,
+  real browsers, visual polish) — and say which of those it is.
+- **Perf timing** still needs real hardware: `perf-measure` skill, xctrace attached to the user's
+  running instance.
 
 ## Running it (critical, non-obvious)
 
@@ -36,6 +53,9 @@ Single test: `swift test --filter StripLayoutTests/testRingWrapsAround` (or a wh
   granted Accessibility (TCC attributes it to the parent shell), so always run with **`make open`**.
 - Because `open`-launched agents have **no stdout**, the app logs to **`/tmp/strip.log`** — `cat`/
   `tail` that to observe behavior (window placements, hotkeys, errors).
+- **Builds from a sandboxed agent shell are ad-hoc signed** — the sandbox can't see the "Strip Dev"
+  identity (`security find-identity -p codesigning` → 0). Never hand such a build to a host launch;
+  the VM path re-signs in the guest, so it's unaffected.
 - **Signing must stay stable** or every rebuild invalidates the grant. The "Strip Dev" self-signed
   cert handles this. If you change the signing identity, the grant resets — run
   `tccutil reset Accessibility io.github.shidil.strip`, `make open`, and re-toggle Strip in System Settings

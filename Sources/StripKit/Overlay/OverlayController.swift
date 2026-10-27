@@ -81,6 +81,55 @@ public final class OverlayController {
     /// `renderOverview` rebuilds the hosting view on every snapshot, which would reset view state.
     private let overviewSelection = OverviewSelection()
 
+    /// Spotlight-style search inside the Overview (⌃⌥F, or `/` while it's open): query, ranked window
+    /// + tab hits, and the AX tab scan that feeds it.
+    private let search = SearchModel()
+    private let tabScanner = TabScanner()
+    /// How the current search session was opened and whether it ended in a pick — logged (counts and
+    /// ranks only, never query text or titles) so prototype feedback has numbers behind it.
+    private var searchOpenedVia = ""
+    private var searchPicked = false
+    /// Bumped per search session so a scan still running from an earlier session can't write its
+    /// (possibly stale) tabs or clear the `scanning` flag of the current one.
+    private var scanGeneration = 0
+
+    /// Resolves a ring window's AX element, for the search's tab scan. Set by `AppDelegate`.
+    public var windowLookup: ((CGWindowID) -> AXWindow?)?
+
+    /// Switch to a tab (run the press) and center its window. Set by `AppDelegate`
+    /// (`StripController.centerTab`, which orders the press on the app's AX queue).
+    public var onCenterTab: ((CGWindowID, @escaping () -> Void) -> Void)?
+
+    /// Switch to an AppKit native tab and center the window it shows (a different window id). Set by
+    /// `AppDelegate` (`StripController.centerNativeTab`).
+    public var onCenterNativeTab: ((CGWindowID, @escaping () -> ShownTabWindow?) -> Void)?
+
+    /// Defer `work` until window `id`'s app isn't mid-motion (Enhanced UI suppressed hides tab bars from
+    /// AX). Set by `AppDelegate` (`StripController.whenAXSettled`).
+    public var whenAXSettled: ((CGWindowID, @escaping () -> Void) -> Void)?
+
+    /// Run a tab press without moving windows (tab peek). Set by `AppDelegate` (`StripController.pressTab`).
+    public var onPressTab: ((CGWindowID, @escaping () -> Void) -> Void)?
+
+    /// Tab peek: while ↑↓ rests on a tab result, the real tab is switched and its window re-captured
+    /// so the card previews it; peeked windows go back to their original tab when the selection moves
+    /// on or search ends without picking them. `peekShown` = window → tab index a peek left showing.
+    private var peekShown: [CGWindowID: Int] = [:]
+    private var peekWork: DispatchWorkItem?
+    private var peekCount = 0
+    /// Pause on a result before peeking, so scrolling fast through results doesn't flip tabs.
+    private static let peekSettleDelay: TimeInterval = 0.12
+    /// Re-captures after a peek press: most warm tabs paint within ~40–80 ms (measured); the second
+    /// catches slower ones.
+    private static let peekCaptureDelays: [TimeInterval] = [0.09, 0.3]
+    /// Longest a tab scan waits for an app's motion to finish (Enhanced UI back on) before scanning
+    /// anyway. A normal re-center settles well inside this.
+    private static let scanSettleTimeout: TimeInterval = 1.5
+
+    /// Fired with `true`/`false` as the search field starts/stops taking input, so the hotkey tap
+    /// routes plain keys as text exactly while it is.
+    public var onSearchActive: ((Bool) -> Void)?
+
     public init() {
         // Stable roots: set once, then drive incremental updates by mutating `model` (perf: overlay
         // render). The rail's onTap reads `self?.onCenter` dynamically, so it stays correct even though
@@ -288,11 +337,8 @@ public final class OverlayController {
     /// Clicking a card centers that window (`onCenter`) and dismisses. No-op until a snapshot exists.
     public func toggleOverview() {
         onMain {
-            if let panel = self.overviewPanel {
-                panel.orderOut(nil)
-                self.overviewPanel = nil
-                self.onOverviewVisibility?(false)
-                Log.line("overview: closed")
+            if self.overviewPanel != nil {
+                self.closeOverview(reason: self.searchPicked ? "pick" : "close")
                 return
             }
             guard let snapshot = self.lastSnapshot,
@@ -315,6 +361,48 @@ public final class OverlayController {
             self.overviewPanel = panel
             self.loadThumbnails(for: snapshot)
         }
+    }
+
+    /// Close the Overview if it's open — ⌘Tab / ⌘` / ⌘Space passed through to the system (`reason`
+    /// "left"). Leaving isn't a pick, so any peeked tab is restored.
+    public func dismissOverview(reason: String) {
+        onMain {
+            guard self.overviewPanel != nil else { return }
+            self.closeOverview(reason: reason)
+        }
+    }
+
+    /// Hide the Overview panel, ending any search session with `reason`. Main thread.
+    private func closeOverview(reason: String) {
+        guard let panel = overviewPanel else { return }
+        endSearch(reason: reason)
+        panel.orderOut(nil)
+        overviewPanel = nil
+        onOverviewVisibility?(false)
+        Log.line("overview: closed (\(reason))")
+    }
+
+    /// A card or rail-chip click: center that window and close. While searching the click is a pick
+    /// and goes through `pickSearchResult` (`clickedResult` says which row), so a peeked tab is kept
+    /// rather than restored and the session logs `pick`, not `close`. Main thread.
+    private func openFromClick(_ id: CGWindowID) {
+        guard overviewPanel != nil else { return }
+        if search.active {
+            let targets = search.results.map(\.candidate.target)
+            if let i = clickedResult(window: id, selected: search.selected, targets: targets) {
+                pickSearchResult(i, via: "click")
+                return
+            }
+            // No row for this window: center it as it is. Still a pick (rank -1), and any peeked
+            // tab — necessarily in another window — goes back.
+            Log.line("search: pick kind=window rank=-1 via=click qlen=\(search.query.count) "
+                     + "results=\(search.results.count)")
+            searchPicked = true
+            peekWork?.cancel()
+            applyPeek(selected: nil)
+        }
+        onCenter?(id)
+        toggleOverview()
     }
 
     /// Kick off thumbnail capture for the windows in `snapshot`. If Screen Recording isn't granted
@@ -350,22 +438,236 @@ public final class OverlayController {
         }
     }
 
+    // MARK: - Search
+
+    /// ⌃⌥F / menu: open the Overview straight into search; from browse mode, switch to search; while
+    /// already searching, close.
+    public func toggleSearch(via: String = "hotkey") {
+        onMain {
+            if self.overviewPanel != nil {
+                if self.search.active { self.toggleOverview() } else { self.beginSearch(via: via) }
+                return
+            }
+            self.toggleOverview()
+            if self.overviewPanel != nil {
+                self.beginSearch(via: via)
+            } else {
+                self.onOverviewVisibility?(false) // the tap set its flags optimistically — undo them
+            }
+        }
+    }
+
+    /// Switch the open Overview into search (`/`), and kick off the tab scan.
+    public func beginSearch(via: String = "slash") {
+        onMain {
+            guard self.overviewPanel != nil, !self.search.active else { return }
+            self.searchOpenedVia = via
+            self.searchPicked = false
+            if let rail = self.lastSnapshot?.rail { self.search.setRail(rail) }
+            self.search.begin()
+            self.onSearchActive?(true)
+            Log.line("search: begin via=\(via)")
+            self.scanTabs()
+        }
+    }
+
+    /// Apply one search-field key (typing, selection, confirm, escape) while searching.
+    public func handleSearchKey(_ key: SearchKey) {
+        onMain {
+            guard self.overviewPanel != nil, self.search.active else { return }
+            switch key {
+            case .edit(.deleteBackward) where self.search.query.isEmpty:
+                self.endSearch(reason: "grid") // ⌫ on an empty query → back to the card grid
+            case .edit(let e):
+                self.search.setQuery(applying(e, to: self.search.query))
+            case .up:
+                self.search.moveSelection(-1)
+            case .down:
+                self.search.moveSelection(1)
+            case .confirm:
+                self.pickSearchResult(self.search.selected, via: "key")
+            case .escape:
+                if self.search.query.isEmpty { self.toggleOverview() } else { self.search.setQuery("") }
+            case .paste:
+                let line = NSPasteboard.general.string(forType: .string)?
+                    .split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+                if !line.isEmpty { self.search.setQuery(self.search.query + line) }
+            case .ignore:
+                break
+            }
+            // Peek only follows deliberate ↑↓ moves. Typing never switches a real tab (a pause while
+            // typing used to peek whatever tab ranked first); it puts back anything peeked earlier.
+            switch key {
+            case .up, .down: self.schedulePeek()
+            case .edit, .paste, .escape: if !self.peekShown.isEmpty { self.schedulePeek(restoreOnly: true) }
+            case .confirm, .ignore: break
+            }
+            if Log.verbose { self.logSearchState(after: key) }
+        }
+    }
+
+    /// e2e oracle (`STRIP_VERBOSE` only): what a search key did, as counts plus the selected row's kind
+    /// and app name — never the query text or a title (scripts/e2e asserts on this line).
+    private func logSearchState(after key: SearchKey) {
+        guard key != .ignore else { Log.line("search: key ignored"); return }
+        guard search.active else { return }
+        let sel = search.results.indices.contains(search.selected) ? search.results[search.selected] : nil
+        let kind = sel.map { $0.candidate.target.isTab ? "tab" : "window" } ?? "none"
+        Log.line("search: state qlen=\(search.query.count) results=\(search.results.count) "
+                 + "sel=\(search.selected) kind=\(kind) app=\(sel?.candidate.appName ?? "-")")
+    }
+
+    /// After the selection settles, peek the selected tab result (restoring any other peeked window),
+    /// or with `restoreOnly` just restore every peeked window.
+    private func schedulePeek(restoreOnly: Bool = false) {
+        peekWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.search.active else { return }
+            var target = restoreOnly ? nil : self.search.selectedTarget
+            if let tab = self.search.tab(for: target), tab.separateWindow { target = nil } // native tabs: no peek
+            self.applyPeek(selected: target)
+        }
+        peekWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.peekSettleDelay, execute: work)
+    }
+
+    /// Press whatever tabs `peekPresses` says, then re-capture each touched window so its card shows
+    /// the tab now visible. Main thread.
+    private func applyPeek(selected: SearchTarget?) {
+        applyPresses(peekPresses(selected: selected, shown: peekShown, original: search.originalTabs))
+    }
+
+    /// Press each window's tab in `presses` (window → tab index) and re-capture it. Main thread.
+    private func applyPresses(_ presses: [CGWindowID: Int]) {
+        let original = search.originalTabs
+        for (window, index) in presses {
+            guard let tab = search.tabs[window].flatMap({ $0.indices.contains(index) ? $0[index] : nil }) else { continue }
+            onPressTab?(window) { tab.press() }
+            if index == original[window] { peekShown.removeValue(forKey: window) } else { peekShown[window] = index; peekCount += 1 }
+            let pressedAt = CFAbsoluteTimeGetCurrent()
+            for delay in Self.peekCaptureDelays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.thumbnails.captureNow(window, pointSize: Self.cardThumbSize) { ok in
+                        if !ok { Log.line("search: peek capture failed id=\(window)") }
+                        else if delay == Self.peekCaptureDelays.first {
+                            Log.line("search: peek id=\(window) captured "
+                                     + String(format: "%.0fms", (CFAbsoluteTimeGetCurrent() - pressedAt) * 1000))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Go to result `i`: switch to its tab (if it's a tab hit), center its window, close the Overview.
+    /// `via` is how it was picked (key, click, row) — for the feedback log.
+    private func pickSearchResult(_ i: Int, via: String) {
+        guard search.results.indices.contains(i) else { return }
+        let target = search.results[i].candidate.target
+        Log.line("search: pick kind=\(target.isTab ? "tab" : "window") rank=\(i) via=\(via) "
+                 + "qlen=\(search.query.count) results=\(search.results.count)")
+        searchPicked = true
+        peekWork?.cancel()
+        // Put back every *other* peeked window; the picked tab is pressed once, below.
+        applyPresses(pickRestores(picked: target, shown: peekShown, original: search.originalTabs))
+        if case .tab(let id, let index) = target, let tabs = search.tabs[id], tabs.indices.contains(index) {
+            let tab = tabs[index]
+            if tab.separateWindow {
+                onCenterNativeTab?(id) { tab.pressShowingNativeTab() }
+            } else {
+                onCenterTab?(id) { tab.press() }
+            }
+        } else {
+            onCenter?(target.windowID)
+        }
+        toggleOverview()
+    }
+
+    /// Leave search mode (back to the grid, or as part of closing). Logs the session outcome.
+    private func endSearch(reason: String) {
+        guard search.active else { return }
+        peekWork?.cancel()
+        if !searchPicked { applyPeek(selected: nil) } // leaving without a pick → every peeked tab restored
+        Log.line("search: end reason=\(reason) via=\(searchOpenedVia) qlen=\(search.query.count) "
+                 + "results=\(search.results.count) tabs=\(search.tabCount) peeks=\(peekCount)")
+        peekShown = [:]
+        peekCount = 0
+        search.end()
+        scanGeneration += 1 // orphan any scan still in flight
+        onSearchActive?(false)
+    }
+
+    /// Scan every ring window's tab bar (off-main, per app); hits stream into the results as each
+    /// window finishes.
+    private func scanTabs() {
+        guard let rail = lastSnapshot?.rail, let lookup = windowLookup else { return }
+        let requests = rail.compactMap { item in
+            lookup(item.id).map { TabScanner.Request(id: item.id, ax: $0, title: item.title, appName: item.appName) }
+        }
+        guard !requests.isEmpty else { return }
+        scanGeneration += 1
+        let generation = scanGeneration
+        search.setScanning(true)
+        let settled = whenAXSettled
+        tabScanner.scan(requests,
+                        gate: { id, go in
+                            guard let settled else { return go() }
+                            let asked = CFAbsoluteTimeGetCurrent()
+                            // Motion end is global (every window's last write), so a hung app or a
+                            // paused display link could hold it forever — scan anyway after a deadline.
+                            // Main-thread only, so a plain flag makes it run exactly once.
+                            var started = false
+                            let start = { (why: String) in
+                                guard !started else { return }
+                                started = true
+                                let waited = (CFAbsoluteTimeGetCurrent() - asked) * 1000
+                                if waited > 5 { Log.line("search: tab scan id=\(id) waited \(Int(waited))ms (\(why))") }
+                                go()
+                            }
+                            settled(id) { start("motion settled") }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + Self.scanSettleTimeout) {
+                                start("timed out — scanning mid-motion")
+                            }
+                        },
+                        onWindow: { [weak self] id, tabs in
+                            guard let self, generation == self.scanGeneration else { return }
+                            self.search.setTabs(tabs, for: id)
+                        },
+                        onDone: { [weak self] in
+                            guard let self, generation == self.scanGeneration else { return }
+                            self.search.setScanning(false)
+                        })
+    }
+
     /// (Re)build the overview's SwiftUI content for the given snapshot.
     private func renderOverview(into panel: NSPanel, _ snapshot: OverlaySnapshot) {
         // Keep the selection in range — the rail count can shrink between renders.
         if !snapshot.rail.isEmpty {
             overviewSelection.index = min(max(0, overviewSelection.index), snapshot.rail.count - 1)
         }
-        let hosting = NSHostingView(rootView: AnyView(
+        let retitled = search.setRail(snapshot.rail)
+        if retitled > 0 {
+            Log.line("search: \(retitled) window title(s) changed mid-search (rows keep their session titles)")
+        }
+        let root = AnyView(
             OverviewView(
                 items: snapshot.rail,
                 thumbnails: thumbnails,
                 selection: overviewSelection,
-                onCenter: { [weak self] id in self?.onCenter?(id) },
-                onClose: { [weak self] in self?.toggleOverview() }
+                search: search,
+                onOpen: { [weak self] id in self?.onMain { self?.openFromClick(id) } },
+                onClose: { [weak self] in self?.toggleOverview() },
+                onPick: { [weak self] i in self?.onMain { self?.pickSearchResult(i, via: "row") } }
             )
-        ))
-        panel.contentView = hosting
+        )
+        // Update the existing hosting view in place: replacing it on every snapshot (any re-tile while
+        // the Overview is open) threw away view state — the search list's scroll position reset, so
+        // the selected row could vanish off the list.
+        if let hosting = panel.contentView as? NSHostingView<AnyView> {
+            hosting.rootView = root
+        } else {
+            panel.contentView = NSHostingView(rootView: root)
+        }
     }
 
     // MARK: - Panel plumbing

@@ -46,7 +46,8 @@ commands and the non-obvious gotchas that make each one actually work. Grouped b
   defer { Signpost.log.endInterval("animate", st, "targets=\(targets.count)") }
   ```
   Present intervals: `apply`, `animate`, `frame`, `placements`, `allWindows`, `refresh`,
-  `watchWindows`, `overlayRender`.
+  `watchWindows`, `overlayRender`, `tabScan` (one window's tab walk, search start),
+  `tabPress` (one tab switch: peek, restore, or pick).
 - **Events** (points in time):
   ```swift
   Signpost.log.emitEvent("inFlightDrop", "id=\(id)")

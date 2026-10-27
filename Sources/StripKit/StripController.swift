@@ -65,6 +65,11 @@ public final class StripController {
     /// of treating them as a real change and forcing a redundant reconcile (perf 1.1).
     public var onWillActivate: ((pid_t) -> Void)?
 
+    /// A window Strip adopted without a reconcile (`centerNativeTab`): the window observer must watch
+    /// it, or its close / drags go unnoticed — a shown native tab never posts `kAXWindowCreated`, and
+    /// its focus notification is suppressed as self-induced. Set by `AppDelegate`.
+    public var onAdoptWindow: ((AXWindow, CGWindowID) -> Void)?
+
     /// Whether the focus ring (the border drawn around the focused window) is shown. Toggled from the
     /// status-bar menu and persisted. When `false` we forward `nil` frames so the overlay hides the
     /// ring at its source — the animator keeps reporting frames, we just swallow them.
@@ -391,6 +396,73 @@ public final class StripController {
         apply()
     }
 
+    /// The AX element of a managed window — the Overview search walks it for tabs (`TabScanner`).
+    public func axWindow(for id: CGWindowID) -> AXWindow? { windowsById[id]?.ax }
+
+    /// Switch to a tab inside window `id` (Overview search), then center the window. `press` runs on
+    /// the app's animator AX queue so it's ordered before this apply's frame writes and the deferred
+    /// focus hand-off; the app's activation/focus notifications it causes are pre-suppressed so the
+    /// press doesn't kick off a full reconcile (perf 1.1).
+    public func centerTab(_ id: CGWindowID, press: @escaping () -> Void) {
+        guard windowsById[id] != nil else { return }
+        pressTab(id, press: press)
+        setCenter(id)
+    }
+
+    /// Switch to an AppKit native tab of window `id` (Overview search), then center the window that
+    /// tab *is*. Each native tab is its own NSWindow, so the press hides `id` and shows another
+    /// window; centering `id` (as `centerTab` does) would hand focus to the hidden window and AppKit
+    /// would switch the tab right back. So nothing moves until `press` (on the app's AX queue, with
+    /// activation pre-suppressed) reports the shown window; that window then takes `id`'s place in
+    /// the film (`StripState.replaceWindow`) and is centered. No `kAXWindows` enumeration.
+    public func centerNativeTab(_ id: CGWindowID, press: @escaping () -> ShownTabWindow?) {
+        guard let w = windowsById[id] else { return }
+        onWillActivate?(w.ax.pid)
+        animator.performAX(pid: w.ax.pid) { [weak self] in
+            let shown = press()
+            DispatchQueue.main.async { self?.adoptShownTab(replacing: id, with: shown) }
+        }
+    }
+
+    /// Main-thread half of `centerNativeTab`: swap the shown tab window in for `old`, then center it.
+    ///
+    /// Race: if the press landed after the self-activation grace, the focus change already ran a full
+    /// reconcile — it dropped `old` and inserted the shown window per `newWindowPlacement` (so its ring
+    /// position and any pin differ); then we only center it.
+    private func adoptShownTab(replacing old: CGWindowID, with shown: ShownTabWindow?) {
+        guard let shown, shown.id != old else { setCenter(old); return } // no switch seen: as before
+        if windowsById[shown.id] != nil { setCenter(shown.id); return }  // a reconcile adopted it first
+        guard let w = windowsById[old] else {
+            Log.line("search: native tab \(old) → \(shown.id) not adopted — \(old) left the strip meanwhile")
+            return
+        }
+        windowsById[shown.id] = ManagedWindow(id: shown.id, ax: shown.ax, appName: w.appName,
+                                              accentKey: w.accentKey, title: shown.title ?? w.title,
+                                              frame: shown.frame ?? w.frame)
+        windowsById[old] = nil
+        if let c = constraints.removeValue(forKey: old) { constraints[shown.id] = c } // same tab group
+        animator.forget(old)
+        onAdoptWindow?(shown.ax, shown.id)
+        state.replaceWindow(old, with: shown.id)
+        setCenter(shown.id)
+    }
+
+    /// Run `work` on main once the app owning window `id` isn't mid-motion with Enhanced UI suppressed
+    /// (`WindowAnimator.whenEnhancedUIRestored`) — the Overview search waits on this before scanning
+    /// that window's tabs. Unknown windows run immediately.
+    public func whenAXSettled(_ id: CGWindowID, _ work: @escaping () -> Void) {
+        guard let w = windowsById[id] else { work(); return }
+        animator.whenEnhancedUIRestored(pid: w.ax.pid, work)
+    }
+
+    /// Run a tab press for window `id` without moving anything (Overview search tab *peek*): on the
+    /// app's animator AX queue, with its activation/focus notifications pre-suppressed.
+    public func pressTab(_ id: CGWindowID, press: @escaping () -> Void) {
+        guard let w = windowsById[id] else { return }
+        onWillActivate?(w.ax.pid)
+        animator.performAX(pid: w.ax.pid, press)
+    }
+
     /// Bring a specific window to center (film-rail chip click; `StripState.setCenter`).
     public func setCenter(_ id: CGWindowID) {
         state.setCenter(id)
@@ -580,6 +652,7 @@ public final class StripController {
             Signpost.log.emitEvent("reconcile.skip") // membership unchanged → no enumeration
             return
         }
+        Log.line("observer: focus reconcile fell back to full (focused window \(id.map { "\($0) unmanaged" } ?? "unreadable"), pid \(pid))")
         refreshAndApply() // unknown focused window → full fallback
     }
 

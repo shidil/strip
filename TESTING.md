@@ -45,7 +45,13 @@ accessory app, so its menu is `menu bar 1`, not the usual app's `menu bar 2`).
 | Release-all / resume (⌃⌥0) | |
 | Minimap position (all 4 edges, via menu) | |
 | Focus-ring toggle (via menu) | |
-| Overview open/close (via menu) | |
+| Overview open/close (via menu) | Clicking an Overview card or rail chip (needs positioned clicks on SwiftUI content) |
+| Search: ⌃⌥F open/close, `/` from the grid, ⌫ back to the grid | Firefox tabs (not installed in the VM) |
+| Search: typing, ⌫ / ⌥⌫, ↑↓ selection, Esc clears then closes | IME / dead-key input (the event tap can't compose it — by design) |
+| Search: type an app name → ↩ centers and focuses it | |
+| Search: ⌘W swallowed; ⌘Tab closes the Overview (search and grid) | |
+| Search: native-tab pick (TextEdit and Finder, two merged windows) adopts the shown window, presses once, keeps the tab; closing it reconciles | |
+| Search: browser tabs in Google Chrome (VM only) and Safari: tab scan, peek + restore, pick presses once | |
 | Widen/narrow the focus window (⌃⌥= / ⌃⌥-) | |
 | Grow/shrink window height (⌃⌥↑ / ⌃⌥↓) | |
 | Tighten/loosen gaps & padding (⌃⌥[ / ⌃⌥]) | |
@@ -76,7 +82,9 @@ scripts/e2e/
   lib/driver.sh        # osascript wrappers: send_hotkey <name>, click_menu/click_submenu <...>
   lib/fixture.sh        # setup_fixture / teardown_fixture
   lib/log_assert.sh     # checkpoint / wait_for_new_apply / wait_for_line / parse_* / assert_eq
-  scenarios.sh          # one function per scenario
+  scenarios.sh          # one function per scenario (layout, hotkeys, menu)
+  search_scenarios.sh   # Overview search scenarios (typing, picks, ⌘Tab, native tabs)
+  vm/setup.sh, vm/run.sh   # the Tart VM path (§7)
   fixtures/placeholder.png   # generated on demand by fixture.sh, not committed
 ```
 
@@ -94,9 +102,18 @@ assumed:
   factory-default install. No persisted-preference fix was found. Console has no document model, so
   a plain `open -a Console` after a full quit reliably yields exactly one window.
 
-**Driver** (`lib/driver.sh`): `send_hotkey <name>` sends one of the v1-scope `⌃⌥`/`⌃⌥⇧` chords (key
+**Driver** (`lib/driver.sh`): `send_hotkey <name>` sends one of the `⌃⌥`/`⌃⌥⇧` chords (key
 codes are the same ones documented in `MEASURING.md` §5, source of truth
-`Sources/StripKit/Input/HotkeyService.swift`). `click_menu`/`click_submenu` drive the status menu.
+`Sources/StripKit/Input/HotkeyService.swift`). `send_key <name> [mods]` sends a plain key (Esc, ↩, ⌫,
+↑↓, Tab, `/`, …; `send_key tab "command down"` is ⌘Tab) and `type_text` types ASCII as real key
+events — Strip's event tap reads both like hardware input. `click_menu`/`click_submenu` drive the
+status menu.
+
+**Search oracle**: with `STRIP_VERBOSE=1` every search key logs `search: state qlen=<n> results=<n>
+sel=<i> kind=<window|tab|none> app=<appName>` or `search: key ignored`
+(`OverlayController.logSearchState`) — counts and app names only, never query text or titles. The
+session lines (`search: begin|pick|end …`, `search: native tab A → B`, `overview: closed (<reason>)`)
+are always logged.
 
 **Oracle** (`lib/log_assert.sh`): parses `/tmp/strip-e2e.log` instead of screenshots. `checkpoint`
 snapshots the log's line count before an action; `wait_for_new_apply`/`wait_for_line` poll for the
@@ -209,21 +226,49 @@ ever running in it, so there's no desktop to keep clean.
 scripts/e2e/vm/setup.sh
 ```
 
-Walks through: installing Tart, pulling the `macos-sequoia-base` community image (~25GB download,
-~50GB on disk — checked against the live registry manifest, not a guess), booting it, disabling
-sleep/screensaver, and a handful of one-time permission grants inside the VM. Safe to re-run partway
-through if interrupted.
+Walks through: installing Tart, cloning the base image (§ below), booting it, disabling
+sleep/screensaver, creating the guest's signing identity, installing Strip, then the one-time privacy
+grants — it opens each System Settings pane in the VM and waits while you flip the toggle (Strip:
+Accessibility and Screen Recording; Terminal: Accessibility and Developer Tools; then the Automation
+prompts for each app the suite drives). It ends with `run.sh --check`. Safe to re-run partway through.
 
 **Regular runs**, once set up:
 
 ```sh
 tart run strip-e2e     # in your own terminal — leave this running
-make e2e-vm             # in another terminal, as many times as you like
+make e2e-vm             # in another terminal (or by an agent), as many times as you like
+make e2e-vm E2E_ONLY="scenario_search_type_and_pick"   # a subset
+make e2e-vm-check       # preflight only
 ```
 
 `make e2e-vm` pushes the freshly host-built `.build/Strip.app` plus `scripts/e2e/` into the VM (via
-`tar` piped through `tart exec`, not a directory mount — simpler, no VM restart needed), launches the
-suite inside a real `Terminal.app` session in the guest, and streams the result back.
+`tar` piped through `tart exec`, not a directory mount — simpler, no VM restart needed), **re-signs
+it in the guest**, launches the suite inside a real `Terminal.app` session in the guest, and streams
+its output back while it runs.
+
+**Why the guest re-signs** (2026-10-27): macOS ties each privacy grant to the app's code signature.
+A host build made where the "Strip Dev" identity isn't visible — a sandboxed agent shell sees no
+signing identities at all — is ad-hoc signed, with a new signature every build, so every push
+silently invalidated the VM's Accessibility grant and needed a manual re-grant. `setup.sh` now
+creates a fixed self-signed identity *inside the guest* (guest-only, using `scripts/setup-signing.sh`)
+and `run.sh` re-signs every pushed build with it, so the grants are made once.
+
+**Artifacts**: after each run `run.sh` copies the guest's Strip log to `.build/e2e-vm-strip.log` (the
+next run overwrites the guest copy).
+
+**Never drive apps with `osascript` straight through `tart exec`.** Under tart-guest-agent an Apple
+Event to System Events (or any app) raises a consent dialog in the VM ("tart-guest-agent wants to
+control …") and the call hangs until `AppleEvent timed out`; the dialog can then sit over the desktop.
+Read-only shell checks (`pgrep`, `cat`, `codesign`) via `tart exec` are fine; anything that scripts an
+app goes through the guest Terminal session like `run.sh` does. (`tell application "Terminal" to do
+script …` itself is the one exception the scripts rely on — Terminal's consent was granted in setup.)
+
+**Keep a golden snapshot.** The original `strip-e2e` VM was lost when the Mac was reset, and its
+grants with it. After setup, `tart stop strip-e2e && tart clone strip-e2e strip-e2e-golden` (a
+copy-on-write clone, cheap); `setup.sh` restores from `strip-e2e-golden` when `strip-e2e` is missing.
+
+**Base image**: `ghcr.io/cirruslabs/macos-tahoe-base:latest` by default (`STRIP_E2E_IMAGE` overrides);
+if it's already in `tart list` the clone is local and fast.
 
 **Why a VM window has to actually be open** (found the hard way, not assumed): `tart run`'s window
 needs a real interactive terminal to render at all — launched from a backgrounded/tool-driven shell,

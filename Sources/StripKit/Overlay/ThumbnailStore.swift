@@ -23,6 +23,19 @@ final class ThumbnailStore: ObservableObject {
 
     subscript(id: CGWindowID) -> CGImage? { images[id] }
 
+    /// Re-capture one window right now, outside the `refresh` in-flight gate (tab peek needs the
+    /// capture that follows *its* press, not to be dropped behind an Overview-open batch). Replaces
+    /// that window's image on success; `completion(success)` fires on main.
+    func captureNow(_ id: CGWindowID, pointSize: CGSize, completion: @escaping (Bool) -> Void = { _ in }) {
+        Task { [weak self] in
+            let captured = await WindowThumbnailer.capture(ids: [id], pointSize: pointSize, scale: Self.scale)
+            await MainActor.run { [weak self] in
+                if let image = captured[id] { self?.images[id] = image }
+                completion(captured[id] != nil)
+            }
+        }
+    }
+
     /// Capture thumbnails for `ids` and merge them into `images`. No-op while a capture is in flight,
     /// so rapid reopens don't stack overlapping ScreenCaptureKit passes. Call on the main thread.
     ///
