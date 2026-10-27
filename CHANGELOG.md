@@ -15,6 +15,12 @@ releases begin. Until then, `Resources/Info.plist` identifies experimental snaps
 - Public onboarding, privacy, security, contribution, release, and architecture decision docs.
 - Static project website (`site/`) with an animated walkthrough of the film-strip concept.
 - Animated README banner (`docs/assets/strip-banner.svg`).
+- Website and README: real screenshots (three-up strip, Overview, search with tab peek, keyboard
+  help), a window & tab search section, a "Find anything" walkthrough scene, the complete shortcut
+  list including Overview and search keys, features that were missing (drag handling, learned size
+  limits, focus following), a roadmap and tab-search FAQ, and the signing step in Get started.
+- `make screenshots`: recaptures those screenshots from a release build in the e2e VM
+  (`scripts/screenshots/`), and `scripts/site/preview.sh` renders the site for a visual check.
 
 ## [0.1.0] - Unreleased
 

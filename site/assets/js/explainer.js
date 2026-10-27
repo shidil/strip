@@ -141,6 +141,26 @@
         };
       },
     },
+    find: {
+      // Type a few letters: the match lights up wherever it is on the film; ↩ rolls it to center.
+      // Ends where it starts (Terminal centered), so the loop is seamless.
+      phases: 5,
+      frame(phase) {
+        const steps = [
+          { focus: 1, keys: ['⌃⌥F'], hint: 'search every window and tab' },
+          { focus: 1, lit: [3], keys: ['c', 'h', 'a'], hint: '“cha” finds Chat, off past the edge' },
+          { focus: 3, keys: ['↩'], hint: 'and rolls it into the center', ringed: true },
+          { focus: 3, lit: [1], keys: ['t', 'e', 'r'], hint: '“ter” finds Terminal' },
+          { focus: 1, keys: ['↩'], hint: 'back in the center', ringed: true },
+        ];
+        const step = steps[phase % steps.length];
+        return {
+          lit: [step.focus - 1, step.focus, step.focus + 1],
+          ...step,
+          gates: 'three',
+        };
+      },
+    },
   };
 
   // DOM helpers --------------------------------------------------------------------------------
