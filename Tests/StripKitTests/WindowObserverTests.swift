@@ -62,6 +62,17 @@ final class WindowObserverTests: XCTestCase {
         }
     }
 
+    /// A window counts as watched only if its close notification registered — a failed add must stay
+    /// unwatched so the next focus retries it (else its close never reconciles).
+    func testOnlyARegisteredNotificationCountsAsWatched() {
+        XCTAssertTrue(WindowObserver.isRegistered(.success))
+        XCTAssertTrue(WindowObserver.isRegistered(.notificationAlreadyRegistered))
+        for err: AXError in [.failure, .cannotComplete, .invalidUIElement, .notificationUnsupported,
+                             .invalidUIElementObserver] {
+            XCTAssertFalse(WindowObserver.isRegistered(err), "\(err.rawValue)")
+        }
+    }
+
     // MARK: - Debounce-batch decision (membership wins over focus)
 
     /// Any membership event in the debounce window forces a full reconcile, even if a pure focus event
