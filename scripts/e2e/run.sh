@@ -49,6 +49,7 @@ SCENARIOS=(
   scenario_search_swallows_cmd_w
   scenario_cmd_tab_leaves_overview
   scenario_search_native_tab_pick
+  scenario_search_finder_tab_pick
   scenario_search_chromium_tabs
   scenario_search_safari_tabs
 )

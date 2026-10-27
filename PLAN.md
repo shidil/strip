@@ -583,7 +583,15 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
       - **Safari re-verified (VM):** `scenario_search_safari_tabs`, same checks as Chrome — tab bar
         found (1 group, ~29 nodes, 17 ms), peek + restore, single-press pick. Safari may add its own
         Start Page tab, so the fixture pages are titled "… fixture". 23/23 twice.
-      - **Still manual:** card/chip clicks (positioned clicks), Firefox tabs (not in the VM), IME.
+      - **Finder native tabs (VM):** `scenario_search_finder_tab_pick` — adoption (`native tab A → B`
+        in ~39 ms), one press, tab kept, and closing the adopted window reconciles
+        (`AXUIElementDestroyed(Finder)`, i.e. `watch(adopted:)` works). Like TextEdit, Finder did
+        **not** switch back under the old `centerTab` routing; only the adoption check failed. The
+        visible switch-back seen on the host looks Terminal-specific.
+      - **Flake fixed:** a scenario adding a 4th window waited for "4 managed", which another window
+        could satisfy; it now waits for that app by name (`wait_for_app_managed`). 24/24 twice.
+      - **Still manual:** card/chip clicks (positioned clicks), Firefox tabs (not in the VM), IME,
+        and the Terminal native-tab switch-back (Terminal hosts the guest runner).
       - **Minor, noticed:** a tab scan still waiting on motion runs after its session ended (its
         callbacks are orphaned by the generation token, but the AX walk still happens).
   - **Open questions:** filter vs dim the grid; type-to-search directly in Overview; empty query as a

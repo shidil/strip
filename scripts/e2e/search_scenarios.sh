@@ -188,7 +188,7 @@ scenario_search_native_tab_pick() {
   sleep 0.5
   _resize_window TextEdit
   click_menu "Re-tile / Re-scan"
-  wait_for_total_count 4 "$cp" 8 >/dev/null || { echo "    ✗ Strip never managed the tabbed TextEdit window (4 total)" >&2; _native_tab_cleanup; return 1; }
+  wait_for_app_managed TextEdit "$cp" 8 >/dev/null || { echo "    ✗ Strip never managed the tabbed TextEdit window" >&2; _native_tab_cleanup; return 1; }
 
   front=$(_textedit_front_doc)
   case "$front" in
@@ -284,7 +284,7 @@ _browser_tab_scenario() {
   sleep 1
   _resize_window "$app"
   click_menu "Re-tile / Re-scan"
-  wait_for_total_count 4 "$cp" 8 >/dev/null || { echo "    ✗ Strip never managed one $app window (4 total)" >&2; _browser_cleanup "$app"; return 1; }
+  wait_for_app_managed "$app" "$cp" 10 >/dev/null || { echo "    ✗ Strip never managed the $app window" >&2; _browser_cleanup "$app"; return 1; }
   front=$(_front_title "$app")
   echo "    ($app front tab: '$front')"
 
@@ -342,3 +342,59 @@ _browser_tab_scenario() {
 
 scenario_search_chromium_tabs() { _browser_tab_scenario "Google Chrome" _launch_chrome; }
 scenario_search_safari_tabs() { _browser_tab_scenario Safari _launch_safari; }
+
+# Native tabs in Finder: two folders merged into one window (each tab its own NSWindow), same checks
+# as the TextEdit one. Finder stays running, so cleanup closes every Finder window (the suite owns the
+# desktop) — a `whose name …` filter fails in Finder (-10010) — and does that *before* deleting the
+# folders: a window whose folder is deleted just moves to the parent and stays open.
+FINDER_DIR="/tmp/strip-e2e-finder"
+_finder_close_fixture() {
+  osascript -e 'tell application "Finder" to close every window' >/dev/null 2>&1
+}
+scenario_search_finder_tab_pick() {
+  local cp front hidden query line block presses ok=0
+  _finder_close_fixture
+  rm -rf "$FINDER_DIR"; mkdir -p "$FINDER_DIR/alpha-fixture" "$FINDER_DIR/beta-fixture"
+  cp=$(checkpoint)
+  open "$FINDER_DIR/alpha-fixture"; sleep 0.5; open "$FINDER_DIR/beta-fixture"; sleep 1
+  osascript -e 'tell application "Finder" to activate' \
+    -e 'tell application "System Events" to tell process "Finder" to click menu item "Merge All Windows" of menu "Window" of menu bar 1' \
+    >/dev/null 2>&1 || { echo "    ✗ couldn't merge the Finder windows into tabs" >&2; ok=1; }
+  sleep 0.5
+  _resize_window Finder
+  click_menu "Re-tile / Re-scan"
+  wait_for_app_managed Finder "$cp" 8 >/dev/null || { echo "    ✗ Strip never managed the tabbed Finder window" >&2; _finder_cleanup; return 1; }
+  front=$(_front_title Finder)
+  case "$front" in
+    alpha-fixture) hidden="beta-fixture" ;;
+    beta-fixture) hidden="alpha-fixture" ;;
+    *) echo "    ✗ unexpected Finder front tab '$front'" >&2; _finder_cleanup; return 1 ;;
+  esac
+
+  cp=$(checkpoint)
+  _search_open || { _finder_cleanup; return 1; }
+  wait_for_line "search: tabs Finder .* tabs=2" "$cp" 3 >/dev/null || { echo "    ✗ tab scan didn't find Finder's 2 tabs" >&2; ok=1; }
+  query="${hidden%-fixture}"
+  type_text "$query"
+  line=$(_search_state "${#query}" "$cp") || { echo "    ✗ typing '$query': no state line" >&2; _search_close; _finder_cleanup; return 1; }
+  assert_eq "$(_state_field "$line" kind)" "tab" "top hit kind for hidden tab '$hidden'" || ok=1
+  cp=$(checkpoint); send_key return
+  wait_for_line "search: native tab id=[0-9]+ → [0-9]+" "$cp" 3 >/dev/null || { echo "    ✗ ↩: shown tab window not adopted (no 'native tab A → B')" >&2; ok=1; }
+  block=$(wait_for_new_apply "$cp" 3) || { echo "    ✗ ↩: no apply after the pick" >&2; ok=1; }
+  presses=$(tail -n "+$((cp + 1))" "$STRIP_E2E_LOG" | grep -c "search: tab press")
+  assert_eq "$presses" "1" "tab presses for one pick" || ok=1
+  sleep 1.5
+  assert_eq "$(_front_title Finder)" "$hidden" "Finder tab showing 1.5 s after the pick" || ok=1
+  [ -n "$block" ] && { assert_eq "$(parse_focus_app "$block")" "Finder" "picked tab's window has focus" || ok=1; }
+
+  [ "$ok" == 0 ] || _search_close 2>/dev/null
+  _finder_cleanup
+  return "$ok"
+}
+_finder_cleanup() {
+  local cp
+  cp=$(checkpoint)
+  _finder_close_fixture
+  wait_for_total_count 3 "$cp" 5 >/dev/null || echo "    (cleanup: Strip didn't settle back at 3 windows)" >&2
+  rm -rf "$FINDER_DIR"
+}

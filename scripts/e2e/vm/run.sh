@@ -144,6 +144,12 @@ done
 out=$(g cat "$GUEST_LOG" 2>/dev/null) || out=""
 printf '%s\n' "$out" | tail -n "+$((shown + 1))"
 
+# Keep the run's Strip log on the host — the next run overwrites the guest's copy.
+if [ "$CHECK_ONLY" == 0 ]; then
+  g cat /tmp/strip-e2e.log >"$ROOT/.build/e2e-vm-strip.log" 2>/dev/null \
+    && echo "Strip's log for this run: .build/e2e-vm-strip.log"
+fi
+
 if [ -z "$code" ]; then
   echo "✗ TIMEOUT after ${POLL_TIMEOUT_S}s waiting for the guest run." >&2
   exit 1

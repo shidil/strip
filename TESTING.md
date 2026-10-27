@@ -50,7 +50,7 @@ accessory app, so its menu is `menu bar 1`, not the usual app's `menu bar 2`).
 | Search: typing, ⌫ / ⌥⌫, ↑↓ selection, Esc clears then closes | IME / dead-key input (the event tap can't compose it — by design) |
 | Search: type an app name → ↩ centers and focuses it | |
 | Search: ⌘W swallowed; ⌘Tab closes the Overview (search and grid) | |
-| Search: native-tab pick (TextEdit, two merged docs) keeps the picked tab | |
+| Search: native-tab pick (TextEdit and Finder, two merged windows) adopts the shown window, presses once, keeps the tab; closing it reconciles | |
 | Search: browser tabs in Google Chrome (VM only) and Safari: tab scan, peek + restore, pick presses once | |
 | Widen/narrow the focus window (⌃⌥= / ⌃⌥-) | |
 | Grow/shrink window height (⌃⌥↑ / ⌃⌥↓) | |
@@ -252,6 +252,9 @@ signing identities at all — is ad-hoc signed, with a new signature every build
 silently invalidated the VM's Accessibility grant and needed a manual re-grant. `setup.sh` now
 creates a fixed self-signed identity *inside the guest* (guest-only, using `scripts/setup-signing.sh`)
 and `run.sh` re-signs every pushed build with it, so the grants are made once.
+
+**Artifacts**: after each run `run.sh` copies the guest's Strip log to `.build/e2e-vm-strip.log` (the
+next run overwrites the guest copy).
 
 **Never drive apps with `osascript` straight through `tart exec`.** Under tart-guest-agent an Apple
 Event to System Events (or any app) raises a consent dialog in the VM ("tart-guest-agent wants to
