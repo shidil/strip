@@ -9,6 +9,7 @@ grep -E ' search: ' "$log" | awk '
   / search: end /           { for (i = 1; i <= NF; i++) { if ($i ~ /^reason=/) reason[substr($i, 8)]++; if ($i ~ /^peeks=/) peeks += substr($i, 7) } }
   / search: peek id=/       { pk++; v = $NF; sub(/ms$/, "", v); pms += v; if (v > pmax) pmax = v }
   / search: peek capture failed/ { pfail++ }
+  / search: tab press /     { tp++; if ($0 ~ / reread /) { tpr++; if ($0 !~ / retry=0 /) tpfail++ } for (i = 1; i <= NF; i++) if ($i ~ /^press=/) { v = substr($i, 7); sub(/ms$/, "", v); pr += v; if (v > prmax) prmax = v } }
   / search: tab scan done / { scans++; for (i = 1; i <= NF; i++) { if ($i ~ /^tabs=/) tabs += substr($i, 6); if ($i ~ /^ambiguous=/) amb += substr($i, 11); if ($i ~ /ms$/) { v = $i; sub(/ms$/, "", v); ms += v; if (v > maxms) maxms = v } } }
   END {
     printf "sessions: %d   picks: %d (%.0f%%)\n", begins, picks, begins ? 100 * picks / begins : 0
@@ -19,5 +20,6 @@ grep -E ' search: ' "$log" | awk '
     printf "picked by: "; for (k in pvia) printf " %s=%d", k, pvia[k]; print ""
     if (picks) printf "avg query length at pick: %.1f\n", q / picks
     if (peeks || pk) printf "tab peeks: %d   first capture after press avg/max: %.0f/%.0f ms   failed captures: %d\n", peeks, pk ? pms / pk : 0, pmax, pfail
+    if (tp) printf "tab presses: %d   needed a re-read: %d   failed: %d   press ms avg/max: %.1f/%.1f\n", tp, tpr, tpfail, pr / tp, prmax
     if (scans) printf "tab scans: %d   avg tabs: %.1f   ambiguous windows: %d   scan ms avg/max: %.1f/%.1f\n", scans, tabs / scans, amb, ms / scans, maxms
   }'

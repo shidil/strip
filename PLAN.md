@@ -477,10 +477,10 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
       - ⌃⌥ + Overview keys drove the hidden browse grid during search. Now only ⌃⌥Space / ⌃⌥F /
         ⌃⌥/ act (`allowedWhileSearching`).
     - **Peek only follows ↑↓.** Typing never switches a real tab and restores any earlier peek.
-    - **Every tab press re-reads the tab bar** and resolves the button by title, with the index as
-      a tie-break; a scan-time element can die when Firefox rebuilds its tree. It falls back to the
-      scanned element and logs it.
-    - **Mid-search re-tiles: explained (2026-10-27), deliberately not fixed yet.** The log now records
+    - ~~**Every tab press re-reads the tab bar**~~ — superseded 2026-10-27: a press now uses the
+      scan-time element and re-reads only if that press fails (see "Merge-readiness fixes").
+    - **Mid-search re-tiles: explained (2026-10-27), ✅ fixed 2026-10-27** (see "Merge-readiness
+      fixes" for the A/B). The log now records
       `observer: full reconcile ← <notification>(<app>)` and when the focus path falls back to full.
       - **Cause:** `kAXUIElementDestroyed` is registered on the *app* element
         (`WindowObserver.notifications`), so Firefox's internal teardown on every tab switch (the old
@@ -492,13 +492,12 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
       - **No visible disruption in user testing** — windows are already in place, so the re-tile
         moves nothing. The cost is a ~32 ms `allWindows()` sweep per occurrence, and presses depend
         on the fallback.
-      - **Fix when it matters:** move `kAXUIElementDestroyed` from the app-element list to the
+      - **Fix (applied):** move `kAXUIElementDestroyed` from the app-element list to the
         per-window `windowNotifications` (like moved/resized), so only real window closes reconcile.
         Trade-off: a window that failed to be watched only drops out at the next reconcile.
       - **Workload for the A/B (perf-sensitive path):** one search session with 10 ↑↓ peeks across
         Firefox tabs, counting `full reconcile ← AXUIElementDestroyed(Firefox)` (12+ expected before,
         0 after); then close a Firefox window and confirm exactly one reconcile line.
-      - **Trigger to revisit:** a visible hitch, or `tab press … err=` with a non-zero code.
     - **Still open:** Enhanced UI is forced on for every app after any motion, whatever its prior
       state (pre-existing). Firefox tab discovery depends on that, so right after launch, before
       any motion, Firefox may show no tabs. A native-tab pick centers the old (now hidden)
@@ -516,6 +515,35 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
       `clickedResult` picks the selected result if it's in that window (keeps the peeked tab, like ↩),
       else the window's own row, else centers the window as-is (`rank=-1`). `search: pick` lines
       carry `via=key|click|row`.
+    - **`kAXUIElementDestroyed` is per window now** (`WindowObserver.windowNotifications`), so Firefox
+      tab switches no longer run a full reconcile. A window counts as watched only if that
+      registration succeeded (`isRegistered`); a failed one is retried when the window is next
+      focused, and the focus path watches the focused window (covers hidden native tabs that were
+      absent from `kAXWindows` at attach and never post `kAXWindowCreated`).
+      - **Remaining trade-off:** a window that is never watched *and* never focused (another
+        Space at attach, failed registration) still closes without a reconcile; it holds its ring
+        slot until some other event reconciles, or `WriteFailureTracker` drops it. There is no
+        periodic refresh.
+    - **Tab press: scan-time element first, re-read only on failure** (`WindowTab.press`). The
+      re-read cost ~21 ms per press, about two-thirds of the press, on the per-pid AX queue that
+      `centerTab`'s frame writes wait behind, and it never changed the outcome: every observed
+      scan-time press succeeded (earlier fallbacks were all `err=0`). `tabPress` signpost interval;
+      each press logs `scanned` or `reread` and its time; `search-feedback.sh` summarizes them.
+    - **A/B (2026-10-27, user hands-on, same workload each build):** `make open`; ⌃⌥L ⌃⌥H; ⌃⌥F,
+      type `firefox` (Firefox, 1 window, 6 tabs); ↓ ×10 at ~1 s each (11 tab presses: 9 peeks + 2
+      restores); Esc Esc; Firefox ⌘N, then ⌘⇧W; Terminal ⌘T, switch to the new tab, ⌘W.
+      | | A (before) | B (+ per-window destroyed) | C (+ scan-element first) |
+      |---|---|---|---|
+      | `Destroyed(Firefox)` reconciles during search | 6 | 0 | 0 |
+      | Per-press cost (A/B: re-read + press; C: press) p50 / p90 / max, n=11 | 31.3 / 34.5 / 37.2 ms | 31.0 / 34.1 / 42.6 ms | 8.7 / 13.1 / 16.1 ms |
+      | Re-read avg (all fresh) | 21.5 ms (11/11) | 22.1 ms (11/11) | none needed (0/11) |
+      | Failed presses / failed peek captures | 0 / 0 | 0 / 0 | 0 / 0 |
+      | ⌘N | spurious `Destroyed` + `Created` | `Created` only | `Created` only |
+      | ⌘⇧W / Terminal tab ⌘W | 1 / – | 1 / 1 | 1 / 1 |
+      A and C scanned 3 ring windows, B 2; only the Firefox window is exercised. Method: log-line
+      wall clock around the AX calls (`search: tab press …`), user-run, three builds of one tree.
+      Not measured: whether a pick's re-center starts sooner (its frame writes queue behind the
+      press on the same per-pid queue).
   - **Open questions:** filter vs dim the grid; type-to-search directly in Overview; empty query as a
     recent-windows switcher; panel size vs the card grid on a 1440 px display.
   - **Next phases (after feedback):** (a) verify Safari / Chromium / native tabs and add per-app

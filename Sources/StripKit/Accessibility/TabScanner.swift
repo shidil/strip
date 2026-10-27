@@ -18,11 +18,26 @@ public struct WindowTab {
     /// Switch to this tab. Synchronous cross-process AX — call off-main (`StripController.pressTab` /
     /// `centerTab` run it on the app's AX queue).
     ///
-    /// The tab bar is **re-read first** and the button looked up by title (index as the tie-break):
-    /// the element captured at scan time can be dead by now — Firefox tears its tab bar out of the AX
-    /// tree whenever Enhanced UI is toggled off for a motion, and any re-tile mid-search does that.
-    /// Falls back to the scanned element when the fresh read finds nothing (e.g. mid-motion).
+    /// Presses the element captured at scan time. Only if that fails (the element died — e.g. the app
+    /// rebuilt its tab bar) is the bar **re-read** and the button looked up by title (index as the
+    /// tie-break) and pressed again. Re-reading first cost ~21 ms per press and never changed the
+    /// outcome (2026-10-27 A/B in PLAN.md: 22/22 re-reads, 14–31 ms; every scan-time press succeeded).
+    ///
+    /// Measured with the `tabPress` signpost interval; every press logs which element it used and how
+    /// long it took.
     func press() {
+        let sp = Signpost.log
+        let state = sp.beginInterval("tabPress", id: sp.makeSignpostID(), "id=\(windowID)")
+        defer { sp.endInterval("tabPress", state) }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        AXUIElementSetMessagingTimeout(element, 0.5)
+        let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
+        let t1 = CFAbsoluteTimeGetCurrent()
+        if err == .success {
+            Log.line("search: tab press id=\(windowID) scanned err=0 "
+                     + String(format: "press=%.1fms", (t1 - t0) * 1000))
+            return
+        }
         let fresh = TabScanner.currentTabButtons(of: window)
         let match: AXUIElement?
         if fresh.indices.contains(index), fresh[index].1.title == title {
@@ -30,13 +45,15 @@ public struct WindowTab {
         } else {
             match = fresh.first { $0.1.title == title }?.0
         }
-        let target = match ?? element
-        AXUIElementSetMessagingTimeout(target, 0.5)
-        let err = AXUIElementPerformAction(target, kAXPressAction as CFString)
-        if err != .success || match == nil {
-            Log.line("search: tab press id=\(windowID) \(match == nil ? "stale-element" : "fresh") "
-                     + "err=\(err.rawValue) freshTabs=\(fresh.count)")
+        var retryErr: AXError?
+        if let match {
+            AXUIElementSetMessagingTimeout(match, 0.5)
+            retryErr = AXUIElementPerformAction(match, kAXPressAction as CFString)
         }
+        let t2 = CFAbsoluteTimeGetCurrent()
+        Log.line("search: tab press id=\(windowID) reread err=\(err.rawValue) "
+                 + "retry=\(retryErr.map { "\($0.rawValue)" } ?? "no-match") freshTabs=\(fresh.count) "
+                 + String(format: "press=%.1fms total=%.1fms", (t1 - t0) * 1000, (t2 - t0) * 1000))
     }
 }
 
