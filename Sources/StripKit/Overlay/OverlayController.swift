@@ -100,6 +100,10 @@ public final class OverlayController {
     /// (`StripController.centerTab`, which orders the press on the app's AX queue).
     public var onCenterTab: ((CGWindowID, @escaping () -> Void) -> Void)?
 
+    /// Defer `work` until window `id`'s app isn't mid-motion (Enhanced UI suppressed hides tab bars from
+    /// AX). Set by `AppDelegate` (`StripController.whenAXSettled`).
+    public var whenAXSettled: ((CGWindowID, @escaping () -> Void) -> Void)?
+
     /// Run a tab press without moving windows (tab peek). Set by `AppDelegate` (`StripController.pressTab`).
     public var onPressTab: ((CGWindowID, @escaping () -> Void) -> Void)?
 
@@ -114,6 +118,9 @@ public final class OverlayController {
     /// Re-captures after a peek press: most warm tabs paint within ~40–80 ms (measured); the second
     /// catches slower ones.
     private static let peekCaptureDelays: [TimeInterval] = [0.09, 0.3]
+    /// Longest a tab scan waits for an app's motion to finish (Enhanced UI back on) before scanning
+    /// anyway. A normal re-center settles well inside this.
+    private static let scanSettleTimeout: TimeInterval = 1.5
 
     /// Fired with `true`/`false` as the search field starts/stops taking input, so the hotkey tap
     /// routes plain keys as text exactly while it is.
@@ -446,16 +453,23 @@ public final class OverlayController {
             case .ignore:
                 break
             }
-            self.schedulePeek()
+            // Peek only follows deliberate ↑↓ moves. Typing never switches a real tab (a pause while
+            // typing used to peek whatever tab ranked first); it puts back anything peeked earlier.
+            switch key {
+            case .up, .down: self.schedulePeek()
+            case .edit, .paste, .escape: if !self.peekShown.isEmpty { self.schedulePeek(restoreOnly: true) }
+            case .confirm, .ignore: break
+            }
         }
     }
 
-    /// Peek the selected tab result after the selection settles (restoring any other peeked window).
-    private func schedulePeek() {
+    /// After the selection settles, peek the selected tab result (restoring any other peeked window),
+    /// or with `restoreOnly` just restore every peeked window.
+    private func schedulePeek(restoreOnly: Bool = false) {
         peekWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.search.active else { return }
-            var target = self.search.selectedTarget
+            var target = restoreOnly ? nil : self.search.selectedTarget
             if let tab = self.search.tab(for: target), tab.separateWindow { target = nil } // native tabs: no peek
             self.applyPeek(selected: target)
         }
@@ -531,11 +545,30 @@ public final class OverlayController {
         scanGeneration += 1
         let generation = scanGeneration
         search.setScanning(true)
+        let settled = whenAXSettled
         tabScanner.scan(requests,
+                        gate: { id, go in
+                            guard let settled else { return go() }
+                            let asked = CFAbsoluteTimeGetCurrent()
+                            // Motion end is global (every window's last write), so a hung app or a
+                            // paused display link could hold it forever — scan anyway after a deadline.
+                            // Main-thread only, so a plain flag makes it run exactly once.
+                            var started = false
+                            let start = { (why: String) in
+                                guard !started else { return }
+                                started = true
+                                let waited = (CFAbsoluteTimeGetCurrent() - asked) * 1000
+                                if waited > 5 { Log.line("search: tab scan id=\(id) waited \(Int(waited))ms (\(why))") }
+                                go()
+                            }
+                            settled(id) { start("motion settled") }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + Self.scanSettleTimeout) {
+                                start("timed out — scanning mid-motion")
+                            }
+                        },
                         onWindow: { [weak self] id, tabs in
                             guard let self, generation == self.scanGeneration else { return }
                             self.search.setTabs(tabs, for: id)
-                            self.schedulePeek() // the selection may now sit on a freshly-found tab
                         },
                         onDone: { [weak self] in
                             guard let self, generation == self.scanGeneration else { return }
@@ -549,8 +582,11 @@ public final class OverlayController {
         if !snapshot.rail.isEmpty {
             overviewSelection.index = min(max(0, overviewSelection.index), snapshot.rail.count - 1)
         }
-        search.setRail(snapshot.rail)
-        let hosting = NSHostingView(rootView: AnyView(
+        let retitled = search.setRail(snapshot.rail)
+        if retitled > 0 {
+            Log.line("search: \(retitled) window title(s) changed mid-search (rows keep their session titles)")
+        }
+        let root = AnyView(
             OverviewView(
                 items: snapshot.rail,
                 thumbnails: thumbnails,
@@ -560,8 +596,15 @@ public final class OverlayController {
                 onClose: { [weak self] in self?.toggleOverview() },
                 onPick: { [weak self] i in self?.onMain { self?.pickSearchResult(i) } }
             )
-        ))
-        panel.contentView = hosting
+        )
+        // Update the existing hosting view in place: replacing it on every snapshot (any re-tile while
+        // the Overview is open) threw away view state — the search list's scroll position reset, so
+        // the selected row could vanish off the list.
+        if let hosting = panel.contentView as? NSHostingView<AnyView> {
+            hosting.rootView = root
+        } else {
+            panel.contentView = NSHostingView(rootView: root)
+        }
     }
 
     // MARK: - Panel plumbing

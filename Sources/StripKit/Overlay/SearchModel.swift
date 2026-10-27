@@ -16,6 +16,10 @@ final class SearchModel: ObservableObject {
     /// Scanned tabs per window, in tab-bar order. `SearchTarget.tab(index:)` indexes into these.
     private(set) var tabs: [CGWindowID: [WindowTab]] = [:]
     private var rail: [RailItem] = []
+    /// Each window's title as of search start. Rail titles change *during* a session — a tab peek
+    /// switches the real tab and the next reconcile re-reads the title — but a window row must keep
+    /// naming what picking it lands on (its original tab, which a pick restores).
+    private var sessionTitles: [CGWindowID: String] = [:]
 
     /// The window the selected result lives in (cards highlight it while searching).
     var selectedWindowID: CGWindowID? {
@@ -44,6 +48,7 @@ final class SearchModel: ObservableObject {
     }
 
     func begin() {
+        sessionTitles = Dictionary(rail.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a })
         active = true
         query = ""
         selected = 0
@@ -55,6 +60,7 @@ final class SearchModel: ObservableObject {
         query = ""
         selected = 0
         results = []
+        sessionTitles = [:]
         // Tab elements can go stale (closed tab/window, Space change) — every session rescans.
         tabs = [:]
         tabCount = 0
@@ -64,14 +70,33 @@ final class SearchModel: ObservableObject {
     func setQuery(_ q: String) {
         guard q != query else { return }
         query = q
-        selected = 0 // a new query always starts on the best hit
-        recompute()
+        selected = 0
+        recompute(keepSelection: false) // a new query always starts on the best hit
     }
 
-    func setRail(_ items: [RailItem]) {
-        guard items != rail else { return }
+    /// Returns how many already-known windows changed title (diagnostics: a mid-search reconcile).
+    @discardableResult
+    func setRail(_ items: [RailItem]) -> Int {
+        guard items != rail else { return 0 }
+        var retitled = 0
+        if active {
+            for item in items {
+                if let known = sessionTitles[item.id] {
+                    if known != item.title { retitled += 1 }
+                } else {
+                    sessionTitles[item.id] = item.title // window joined mid-search
+                }
+            }
+        }
         rail = items
         recompute()
+        return retitled
+    }
+
+    /// What a window row shows: the window's active tab as *scanned* at search start (live, unlike
+    /// Strip's stored title, which tab switches never update), else its title at search start.
+    private func windowTitle(_ item: RailItem) -> String {
+        tabs[item.id]?.first(where: \.selected)?.title ?? sessionTitles[item.id] ?? item.title
     }
 
     func setScanning(_ on: Bool) { scanning = on }
@@ -90,20 +115,22 @@ final class SearchModel: ObservableObject {
         selected = posMod(selected + delta, results.count)
     }
 
-    /// Re-rank against the current rail + tabs, keeping the selected *target* when it's still present
-    /// (so tabs streaming in don't yank the selection out from under the user).
-    private func recompute() {
-        let keep = results.indices.contains(selected) ? results[selected].candidate.target : nil
+    /// Re-rank against the current rail + tabs. With `keepSelection` (rail updates, tabs streaming in)
+    /// the selected *target* stays selected when it's still present, so results arriving don't yank
+    /// it away; a new query passes `false` so the selection lands on the new best hit.
+    private func recompute(keepSelection: Bool = true) {
+        let keep = keepSelection && results.indices.contains(selected) ? results[selected].candidate.target : nil
         var candidates: [SearchCandidate] = []
         var order = 0
         var tabTotal = 0
         for item in rail {
-            candidates.append(SearchCandidate(target: .window(item.id), title: item.title,
+            let title = windowTitle(item)
+            candidates.append(SearchCandidate(target: .window(item.id), title: title,
                                               appName: item.appName, order: order))
             order += 1
             for (i, tab) in (tabs[item.id] ?? []).enumerated() where !tab.selected {
                 candidates.append(SearchCandidate(target: .tab(window: item.id, index: i), title: tab.title,
-                                                  appName: item.appName, context: item.title, order: order))
+                                                  appName: item.appName, context: title, order: order))
                 order += 1
                 tabTotal += 1
             }

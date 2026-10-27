@@ -166,6 +166,15 @@ final class WindowSearchTests: XCTestCase {
         XCTAssertNil(key(0x31, " ", command: true))              // ⌘Space (Spotlight) passes through
     }
 
+    func testOnlyOverviewTogglingChordsActWhileSearching() {
+        XCTAssertTrue(allowedWhileSearching(.toggleOverview))   // ⌃⌥Space closes
+        XCTAssertTrue(allowedWhileSearching(.toggleSearch))     // ⌃⌥F closes
+        XCTAssertTrue(allowedWhileSearching(.toggleHelp))
+        XCTAssertFalse(allowedWhileSearching(.overview(.confirm))) // ⌃⌥↩ must not open the hidden grid pick
+        XCTAssertFalse(allowedWhileSearching(.slideNext))           // ⌃⌥L must not re-tile mid-search
+        XCTAssertFalse(allowedWhileSearching(.cols(2)))
+    }
+
     func testNonPrintableKeysAreSwallowed() {
         XCTAssertEqual(key(0x7B, "\u{F702}"), .ignore)           // ← (private-use function char)
         XCTAssertEqual(key(0x7A, "\u{F704}"), .ignore)           // F1
@@ -238,6 +247,17 @@ final class WindowSearchTests: XCTestCase {
         let tabs = [TabInfo(title: "Inbox", selected: true)]
         let other = [TabInfo(title: "Panel", selected: true)]
         XCTAssertEqual(pickTabGroup([other, tabs], windowTitle: "Inbox — Mozilla Firefox"), 1)
+    }
+
+    func testUnmatchedTitleFallsBackToTheGroupWithASelectedTab() {
+        // Firefox on a New Tab page: window title "Mozilla Firefox" matches no tab (seen live
+        // 2026-10-26); the sidebar's buttons are all unselected.
+        let tabs = [TabInfo(title: "oolio-group/bookings", selected: false),
+                    TabInfo(title: "New Tab", selected: true)]
+        let sidebar = [TabInfo(title: "Bookmarks", selected: false),
+                       TabInfo(title: "History", selected: false)]
+        XCTAssertEqual(pickTabGroup([tabs, sidebar], windowTitle: "Mozilla Firefox"), 0)
+        XCTAssertEqual(pickTabGroup([sidebar, tabs], windowTitle: ""), 1)
     }
 
     func testLoneGroupIsTrusted() {

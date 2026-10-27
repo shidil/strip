@@ -246,7 +246,10 @@ public func peekPresses(selected: SearchTarget?, shown: [CGWindowID: Int],
 /// `AXTabGroup` — Firefox's sidebar ("Bookmarks", "History", "Customize sidebar") is a second one
 /// with identical roles/subroles. The real tab bar is the group whose **selected tab's title matches
 /// the window title** (browsers and native NSWindow tabs title the window after the active tab).
-/// A lone group is trusted as-is. Anything else is ambiguous → nil (show no tabs rather than junk).
+/// The title often doesn't say — Firefox titles a New Tab window just "Mozilla Firefox", and private
+/// or untitled pages differ too — so failing that, the real bar is the **only group with exactly one
+/// selected tab** (a tab bar always has one; the sidebar's buttons are all unselected while no panel
+/// is open). A lone group is trusted as-is. Anything else is ambiguous → nil (no tabs, not junk).
 public func pickTabGroup(_ groups: [[TabInfo]], windowTitle: String) -> Int? {
     let wt = windowTitle.trimmingCharacters(in: .whitespaces)
     if !wt.isEmpty {
@@ -257,5 +260,7 @@ public func pickTabGroup(_ groups: [[TabInfo]], windowTitle: String) -> Int? {
             if wt.hasPrefix(st) || st.hasPrefix(wt) || wt.contains(st) { return i }
         }
     }
-    return groups.count == 1 ? 0 : nil
+    if groups.count == 1 { return 0 }
+    let oneSelected = groups.indices.filter { i in groups[i].filter(\.selected).count == 1 }
+    return oneSelected.count == 1 ? oneSelected[0] : nil
 }

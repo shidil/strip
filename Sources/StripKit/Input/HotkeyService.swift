@@ -109,9 +109,15 @@ public final class HotkeyService {
     fileprivate func command(for event: CGEvent) -> HotkeyCommand? {
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
-        // While searching, plain keys are text for the search field; ⌃⌥ chords still fall through to
-        // the strip commands below (so ⌃⌥Space / ⌃⌥F still close).
-        if overviewOpen, searchActive, !flags.contains(Self.chord) {
+        // While searching, plain keys are text for the search field. Of the ⌃⌥ chords only the ones
+        // that close or toggle the Overview work (`allowedWhileSearching`); the rest are swallowed —
+        // otherwise ⌃⌥↩/⌃⌥J would drive the hidden *browse* grid, and ⌃⌥H/L re-tile mid-search.
+        if overviewOpen, searchActive, flags.contains(Self.chord), !flags.contains(.maskCommand) {
+            guard let cmd = chordCommand(keyCode: keyCode, shift: flags.contains(.maskShift)),
+                  allowedWhileSearching(cmd) else { return .search(.ignore) }
+            return cmd
+        }
+        if overviewOpen, searchActive {
             return searchKey(keyCode: keyCode,
                              shift: flags.contains(.maskShift),
                              control: flags.contains(.maskControl),
@@ -132,8 +138,11 @@ public final class HotkeyService {
         guard flags.contains(Self.chord) else { return nil }
         // Disallow Command in the chord so app shortcuts (⌘…) are never shadowed.
         if flags.contains(.maskCommand) { return nil }
-        let shift = flags.contains(.maskShift)
+        return chordCommand(keyCode: keyCode, shift: flags.contains(.maskShift))
+    }
 
+    /// The strip command for a ⌃⌥ + `keyCode` chord, or nil.
+    private func chordCommand(keyCode: Int, shift: Bool) -> HotkeyCommand? {
         switch keyCode {
         case kVK_ANSI_H: return shift ? .movePrev : .slidePrev
         case kVK_ANSI_L: return shift ? .moveNext : .slideNext
@@ -187,6 +196,16 @@ public final class HotkeyService {
         case kVK_Escape, kVK_Space:      return .close
         default:                         return nil
         }
+    }
+}
+
+/// The ⌃⌥ chords that still act while the Overview is searching: the ones that close or toggle it
+/// (and the help sheet). Everything else is swallowed so it can't drive the hidden browse grid or
+/// re-tile windows under an open search.
+func allowedWhileSearching(_ command: HotkeyCommand) -> Bool {
+    switch command {
+    case .toggleOverview, .toggleSearch, .toggleHelp: return true
+    default: return false
     }
 }
 

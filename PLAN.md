@@ -413,7 +413,7 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
        title, app name (×¾) or — for tabs — the parent window title (×⅓). Window +4 over an equal tab;
        the active tab of a window is not listed separately (the window row covers it).
     5. **Tab scan only when search starts**, per-app serial queues off-main, results stream in;
-       BFS bounded (depth 9, 400 nodes incl. frontier, 250 ms, 0.15 s per-call AX timeout so a hung
+       BFS bounded (depth 9, 600 nodes incl. frontier, 250 ms, 0.15 s per-call AX timeout so a hung
        app can't hold its queue) and never enters `AXWebArea`/tables/outlines/lists. Tabs are dropped
        at session end (stale elements) and a generation token orphans late scan callbacks. A tab pick
        goes through `StripController.centerTab`: activation pre-suppressed, press on the animator's
@@ -454,6 +454,53 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
       closing restores every peeked window's original tab; ↩ on a tab keeps it. Which presses to make
       is the pure `peekPresses` (tested). Known gap: a parked (off-display) window may not capture,
       leaving the old thumbnail under the caption (`peek capture failed` in the log).
+  - **Round 3 (2026-10-26/27): Firefox tabs intermittent, then wrong-tab / vanishing rows.** Root causes
+    found and fixed:
+    - **Enhanced UI off ⇒ no tab bar.** The animator turns `AXEnhancedUserInterface` off for the
+      length of a motion; Firefox then exposes 5 AX nodes and no tabs (48 / 11 tab buttons when on).
+      Each window's scan waits on `WindowAnimator.whenEnhancedUIRestored`, re-checked on main if a
+      new motion starts, and capped at 1.5 s.
+    - **Title-only tab-bar choice was fragile.** The stored title goes stale after tab switches, and
+      on a New Tab page Firefox's live title is just "Mozilla Firefox". `pickTabGroup` now reads
+      the live title and falls back to the only bar with exactly one selected tab.
+    - **Window rows** show the window's scanned active tab, or its title at search start, never
+      the mid-search title (a peek plus a reconcile re-read it).
+    - **The Overview hosting view is updated in place**, so the results list keeps its scroll
+      position.
+    - **Code review findings, fixed:**
+      - A new query kept the *old* top hit selected. That was the main cause of "tabs disappear"
+        (↩, peek and scroll all followed the old row); there is now a regression test.
+      - The scan set a 0.15 s AX timeout on Strip's own shared window element, so animator writes
+        could time out and `WriteFailureTracker` could drop the window.
+      - ⌃⌥ + Overview keys drove the hidden browse grid during search. Now only ⌃⌥Space / ⌃⌥F /
+        ⌃⌥/ act (`allowedWhileSearching`).
+    - **Peek only follows ↑↓.** Typing never switches a real tab and restores any earlier peek.
+    - **Every tab press re-reads the tab bar** and resolves the button by title, with the index as
+      a tie-break; a scan-time element can die when Firefox rebuilds its tree. It falls back to the
+      scanned element and logs it.
+    - **Mid-search re-tiles: explained (2026-10-27), deliberately not fixed yet.** The log now records
+      `observer: full reconcile ← <notification>(<app>)` and when the focus path falls back to full.
+      - **Cause:** `kAXUIElementDestroyed` is registered on the *app* element
+        (`WindowObserver.notifications`), so Firefox's internal teardown on every tab switch (the old
+        tab's elements, plus its `ThemeWidgetControlViewService` helper) reads as a possible window
+        close → full reconcile → apply → Enhanced UI off → Firefox hides its tab bar.
+      - **Measured:** 12 Firefox-destroyed full reconciles in ~95 s of searching, each within ~100 ms
+        of a peek or tab pick. The fresh tab re-read then found 0 tabs (`tab press … stale-element
+        err=0 freshTabs=0`) and the press fell back to the scan-time element, which still worked.
+      - **No visible disruption in user testing** — windows are already in place, so the re-tile
+        moves nothing. The cost is a ~32 ms `allWindows()` sweep per occurrence, and presses depend
+        on the fallback.
+      - **Fix when it matters:** move `kAXUIElementDestroyed` from the app-element list to the
+        per-window `windowNotifications` (like moved/resized), so only real window closes reconcile.
+        Trade-off: a window that failed to be watched only drops out at the next reconcile.
+      - **Workload for the A/B (perf-sensitive path):** one search session with 10 ↑↓ peeks across
+        Firefox tabs, counting `full reconcile ← AXUIElementDestroyed(Firefox)` (12+ expected before,
+        0 after); then close a Firefox window and confirm exactly one reconcile line.
+      - **Trigger to revisit:** a visible hitch, or `tab press … err=` with a non-zero code.
+    - **Still open:** Enhanced UI is forced on for every app after any motion, whatever its prior
+      state (pre-existing). Firefox tab discovery depends on that, so right after launch, before
+      any motion, Firefox may show no tabs. A native-tab pick centers the old (now hidden)
+      window id.
   - **Open questions:** filter vs dim the grid; type-to-search directly in Overview; empty query as a
     recent-windows switcher; panel size vs the card grid on a 1440 px display.
   - **Next phases (after feedback):** (a) verify Safari / Chromium / native tabs and add per-app

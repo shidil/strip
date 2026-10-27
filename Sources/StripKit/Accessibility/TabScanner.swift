@@ -8,15 +8,35 @@ public struct WindowTab {
     public let selected: Bool
     /// AppKit native window tab (each tab is its own window) — not peekable (`tabsAreSeparateWindows`).
     public let separateWindow: Bool
+    /// Position in the scanned tab bar, and the window it lives in — used to find the tab *again*
+    /// right before pressing it (`press`).
+    let index: Int
+    let window: AXWindow
     let element: AXUIElement
     let pid: pid_t
 
-    /// Switch to this tab (AXPress on its tab button). Synchronous cross-process AX — call off-main
-    /// (`StripController.centerTab` runs it on the app's AX queue).
+    /// Switch to this tab. Synchronous cross-process AX — call off-main (`StripController.pressTab` /
+    /// `centerTab` run it on the app's AX queue).
+    ///
+    /// The tab bar is **re-read first** and the button looked up by title (index as the tie-break):
+    /// the element captured at scan time can be dead by now — Firefox tears its tab bar out of the AX
+    /// tree whenever Enhanced UI is toggled off for a motion, and any re-tile mid-search does that.
+    /// Falls back to the scanned element when the fresh read finds nothing (e.g. mid-motion).
     func press() {
-        AXUIElementSetMessagingTimeout(element, 0.5)
-        let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
-        if err != .success { Log.line("search: tab press failed id=\(windowID) err=\(err.rawValue)") }
+        let fresh = TabScanner.currentTabButtons(of: window)
+        let match: AXUIElement?
+        if fresh.indices.contains(index), fresh[index].1.title == title {
+            match = fresh[index].0
+        } else {
+            match = fresh.first { $0.1.title == title }?.0
+        }
+        let target = match ?? element
+        AXUIElementSetMessagingTimeout(target, 0.5)
+        let err = AXUIElementPerformAction(target, kAXPressAction as CFString)
+        if err != .success || match == nil {
+            Log.line("search: tab press id=\(windowID) \(match == nil ? "stale-element" : "fresh") "
+                     + "err=\(err.rawValue) freshTabs=\(fresh.count)")
+        }
     }
 }
 
@@ -58,7 +78,11 @@ final class TabScanner {
 
     /// Scan `requests` concurrently (one serial queue per app). `onWindow` fires on the main thread as
     /// each window finishes — so results stream in — and `onDone` once all have.
+    ///
+    /// `gate` delays each window's scan until its app is safe to read (`StripController.whenAXSettled`
+    /// — Enhanced UI back on after a motion); the default scans immediately.
     func scan(_ requests: [Request],
+              gate: @escaping (CGWindowID, @escaping () -> Void) -> Void = { _, go in go() },
               onWindow: @escaping (CGWindowID, [WindowTab]) -> Void,
               onDone: @escaping () -> Void) {
         let group = DispatchGroup()
@@ -66,7 +90,7 @@ final class TabScanner {
         var withTabs = 0, tabTotal = 0, ambiguous = 0 // touched on main only
         for r in requests {
             group.enter()
-            queue(for: r.ax.pid).async {
+            gate(r.id) { [self] in self.queue(for: r.ax.pid).async {
                 let sp = Signpost.log
                 // Scans overlap across apps, so each interval needs its own id (not `.exclusive`).
                 let state = sp.beginInterval("tabScan", id: sp.makeSignpostID(), "id=\(r.id)")
@@ -86,7 +110,7 @@ final class TabScanner {
                     onWindow(r.id, outcome.tabs)
                     group.leave()
                 }
-            }
+            } }
         }
         group.notify(queue: .main) {
             let ms = (CFAbsoluteTimeGetCurrent() - started) * 1000
@@ -103,6 +127,14 @@ final class TabScanner {
         var groups = 0
         var nodes = 0
         var ambiguous = false
+    }
+
+    /// The window's current tab buttons (the picked tab bar), read now. Off-main only.
+    static func currentTabButtons(of window: AXWindow) -> [(AXUIElement, TabInfo)] {
+        var title: CFTypeRef?
+        AXUIElementCopyAttributeValue(window.element, kAXTitleAttribute as CFString, &title)
+        let outcome = scanWindow(Request(id: 0, ax: window, title: title as? String ?? "", appName: ""))
+        return outcome.tabs.map { ($0.element, TabInfo(title: $0.title, selected: $0.selected)) }
     }
 
     private static func scanWindow(_ r: Request) -> Outcome {
@@ -123,7 +155,10 @@ final class TabScanner {
             let index = head
             head += 1
             out.nodes += 1
-            let role = string(node.el, kAXRoleAttribute) ?? ""
+            // The root is Strip's own window element (shared with the animator): never change its
+            // messaging timeout — only the elements this walk creates get the short one.
+            let own = node.depth > 0
+            let role = string(node.el, kAXRoleAttribute, timeout: own) ?? ""
             if role == (kAXRadioButtonRole as String) {
                 if isTabButton(role: role, subrole: string(node.el, kAXSubroleAttribute), parentRole: node.parentRole) {
                     if bars[node.parent] == nil {
@@ -137,7 +172,7 @@ final class TabScanner {
             }
             if skipRoles.contains(role) || node.depth >= maxDepth { continue }
             // Cap the frontier too: a huge container's children would otherwise all be queued.
-            for child in children(node.el) where frontier.count < maxNodes {
+            for child in children(node.el, timeout: own) where frontier.count < maxNodes {
                 frontier.append((child, node.depth + 1, index, role, node.parentRole))
             }
         }
@@ -145,14 +180,17 @@ final class TabScanner {
         guard !barOrder.isEmpty else { return out }
 
         let read: [[(AXUIElement, TabInfo)]] = barOrder.map { tabInfo(for: bars[$0] ?? []) }
-        guard let pick = pickTabGroup(read.map { $0.map(\.1) }, windowTitle: r.title) else {
+        // The *live* title: Strip's stored one goes stale whenever a tab switches (title changes
+        // aren't observed), and a stale title can't tell Firefox's tab bar from its sidebar.
+        let title = string(r.ax.element, kAXTitleAttribute, timeout: false) ?? r.title
+        guard let pick = pickTabGroup(read.map { $0.map(\.1) }, windowTitle: title) else {
             out.ambiguous = read.contains { !$0.isEmpty }
             return out
         }
         let separate = barSeparate[barOrder[pick]] ?? false
-        out.tabs = read[pick].map { el, info in
-            WindowTab(windowID: r.id, title: info.title, selected: info.selected, separateWindow: separate,
-                      element: el, pid: r.ax.pid)
+        out.tabs = read[pick].enumerated().map { i, pair in
+            WindowTab(windowID: r.id, title: pair.1.title, selected: pair.1.selected, separateWindow: separate,
+                      index: i, window: r.ax, element: pair.0, pid: r.ax.pid)
         }
         return out
     }
@@ -169,15 +207,15 @@ final class TabScanner {
         }
     }
 
-    private static func children(_ el: AXUIElement) -> [AXUIElement] {
-        AXUIElementSetMessagingTimeout(el, callTimeout)
+    private static func children(_ el: AXUIElement, timeout: Bool = true) -> [AXUIElement] {
+        if timeout { AXUIElementSetMessagingTimeout(el, callTimeout) }
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &ref) == .success else { return [] }
         return (ref as? [AXUIElement]) ?? []
     }
 
-    private static func string(_ el: AXUIElement, _ attr: String) -> String? {
-        AXUIElementSetMessagingTimeout(el, callTimeout)
+    private static func string(_ el: AXUIElement, _ attr: String, timeout: Bool = true) -> String? {
+        if timeout { AXUIElementSetMessagingTimeout(el, callTimeout) }
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(el, attr as CFString, &ref) == .success else { return nil }
         guard let s = ref as? String, !s.isEmpty else { return nil }

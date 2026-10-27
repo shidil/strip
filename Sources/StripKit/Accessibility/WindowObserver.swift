@@ -57,6 +57,9 @@ public final class WindowObserver {
     /// a burst can't downgrade a real membership change that arrived earlier. Reset on fire.
     private var pendingFullReconcile = false
     private var pendingFocusPID: pid_t?
+    /// What requested the pending full reconcile (deduped, capped), logged when it fires — so an
+    /// unexplained re-tile in `/tmp/strip.log` names its trigger (e.g. a tab switch's AX churn).
+    private var pendingReasons: [String] = []
 
     /// Per-window in-flight user gestures: id → did we see a resize (vs. a pure move). Flushed to
     /// `onUserDrag` once the gesture ends.
@@ -178,14 +181,14 @@ public final class WindowObserver {
             // them when they appear, and the reconcile below catches anything already present.
             attach(to: app)
         }
-        scheduleReconcile()
+        scheduleReconcile("app-launched")
     }
 
     @objc private func appTerminated(_ note: Notification) {
         if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
             detach(pid: app.processIdentifier)
         }
-        scheduleReconcile()
+        scheduleReconcile("app-terminated")
     }
 
     /// App hide/unhide: which windows are tileable changed, so take the full reconcile path.
@@ -193,7 +196,7 @@ public final class WindowObserver {
         if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
             attach(to: app)
         }
-        scheduleReconcile()
+        scheduleReconcile("app-hidden/unhidden")
     }
 
     /// App activation (Cmd-Tab / `open -a` of a running app): a *pure focus* event that changes no
@@ -201,7 +204,7 @@ public final class WindowObserver {
     /// sweep when the user merely switched apps (perf 1.1 second half).
     @objc private func appActivated(_ note: Notification) {
         guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
-            scheduleReconcile() // no app info → be safe, full reconcile
+            scheduleReconcile("activation-without-app") // no app info → be safe, full reconcile
             return
         }
         // Skip the activation Strip's own focus() caused: we triggered it and nothing changed.
@@ -263,7 +266,7 @@ public final class WindowObserver {
         case kAXWindowCreatedNotification:
             // The element delivered for a window-created notification *is* the new window.
             me.watch(window: element)
-            me.scheduleReconcile()
+            me.scheduleReconcile(WindowObserver.reason(name, element))
         default:
             // Everything else: focus/main-window-changed (pure focus) vs destroy/miniaturize
             // (membership). Route by classification.
@@ -272,12 +275,14 @@ public final class WindowObserver {
                 // Focused/main-window-changed posts on the app element. Drop the one Strip's own
                 // apply() induces for the pid we just activated; otherwise take the lightweight path.
                 var pid: pid_t = 0
-                guard AXUIElementGetPid(element, &pid) == .success else { me.scheduleReconcile(); return }
+                guard AXUIElementGetPid(element, &pid) == .success else {
+                    me.scheduleReconcile(WindowObserver.reason(name, element)); return
+                }
                 if me.isSelfInducedActivation(pid: pid, now: CACurrentMediaTime()) { return }
                 me.scheduleFocusReconcile(pid: pid)
             case .full:
                 // kAXUIElementDestroyed / kAXWindowMiniaturized / kAXWindowDeminiaturized — membership.
-                me.scheduleReconcile()
+                me.scheduleReconcile(WindowObserver.reason(name, element))
             }
         }
     }
@@ -354,7 +359,7 @@ public final class WindowObserver {
             scheduleFlush(after: mouseUpSettle)
         } else if reconcileDeferred {
             reconcileDeferred = false
-            scheduleReconcile()
+            scheduleReconcile("deferred-during-drag")
         }
     }
 
@@ -403,10 +408,11 @@ public final class WindowObserver {
     }
 
     /// Request a **full** reconcile (membership may have changed). Sticky for the debounce window.
-    private func scheduleReconcile() {
+    private func scheduleReconcile(_ reason: String) {
         // Reconcile fire-rate: each emit is one (debounced) reconcile request. During a Cmd-Tab/
         // focus storm this rate is the R1 cost driver — Phase 1 (1.1) drops the no-op ones.
         Signpost.log.emitEvent("reconcile")
+        if pendingReasons.count < 6, !pendingReasons.contains(reason) { pendingReasons.append(reason) }
         pendingFullReconcile = true
         armDebounce()
     }
@@ -435,8 +441,11 @@ public final class WindowObserver {
         let action = Self.batchAction(sawMembership: pendingFullReconcile, focusPID: pendingFocusPID)
         pendingFullReconcile = false
         pendingFocusPID = nil
+        let reasons = pendingReasons
+        pendingReasons = []
         switch action {
         case .full:
+            Log.line("observer: full reconcile ← \(reasons.joined(separator: ", "))")
             onReconcile?()
         case .lightweight(let pid):
             // Cheap per-element read (main thread): one `kAXFocusedWindow` on a known app element —
@@ -445,6 +454,15 @@ public final class WindowObserver {
         case .none:
             break
         }
+    }
+
+    /// "AXUIElementDestroyed(Firefox)" — a notification name plus its app, for the reconcile log.
+    /// (No AX read: a destroyed element can't answer, and this runs in the observer callback.)
+    fileprivate static func reason(_ name: String, _ element: AXUIElement) -> String {
+        var pid: pid_t = 0
+        let app = AXUIElementGetPid(element, &pid) == .success
+            ? NSRunningApplication(processIdentifier: pid)?.localizedName ?? "pid \(pid)" : "?"
+        return "\(name)(\(app))"
     }
 
     /// The `CGWindowID` of `pid`'s currently-focused window, or `nil` if unreadable.

@@ -30,6 +30,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.windowLookup = { [weak self] id in self?.controller.axWindow(for: id) }
         overlay.onCenterTab = { [weak self] id, press in self?.controller.centerTab(id, press: press) }
         overlay.onPressTab = { [weak self] id, press in self?.controller.pressTab(id, press: press) }
+        overlay.whenAXSettled = { [weak self] id, work in
+            guard let self else { return work() }
+            self.controller.whenAXSettled(id, work)
+        }
         controller.onRender = { [weak self] snapshot in self?.overlay.update(snapshot) }
         controller.onFocusFrame = { [weak self] frame in self?.overlay.updateFocusRing(frame) }
         controller.refreshAndApply()

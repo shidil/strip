@@ -404,6 +404,14 @@ public final class StripController {
         setCenter(id)
     }
 
+    /// Run `work` on main once the app owning window `id` isn't mid-motion with Enhanced UI suppressed
+    /// (`WindowAnimator.whenEnhancedUIRestored`) — the Overview search waits on this before scanning
+    /// that window's tabs. Unknown windows run immediately.
+    public func whenAXSettled(_ id: CGWindowID, _ work: @escaping () -> Void) {
+        guard let w = windowsById[id] else { work(); return }
+        animator.whenEnhancedUIRestored(pid: w.ax.pid, work)
+    }
+
     /// Run a tab press for window `id` without moving anything (Overview search tab *peek*): on the
     /// app's animator AX queue, with its activation/focus notifications pre-suppressed.
     public func pressTab(_ id: CGWindowID, press: @escaping () -> Void) {
@@ -601,6 +609,7 @@ public final class StripController {
             Signpost.log.emitEvent("reconcile.skip") // membership unchanged → no enumeration
             return
         }
+        Log.line("observer: focus reconcile fell back to full (focused window \(id.map { "\($0) unmanaged" } ?? "unreadable"), pid \(pid))")
         refreshAndApply() // unknown focused window → full fallback
     }
 
