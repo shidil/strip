@@ -9,6 +9,7 @@ site/
   assets/css/site.css     design tokens (top of file), components, and the walkthrough stage
   assets/js/explainer.js  animated walkthrough stage + hero film (progressive enhancement)
   assets/img/             favicon.svg (source), og-image.png + apple-touch-icon.png (generated)
+  assets/img/screenshots/ real VM captures (make screenshots)
   robots.txt, sitemap.xml
 ```
 
@@ -38,6 +39,17 @@ Opening `index.html` directly from disk also works.
   player pauses on hover, off-screen, and in background tabs.
 
 ## Images
+
+**Screenshots** (`assets/img/screenshots/*.jpg`, also used by the repo README) are real captures of a
+release build in the `strip-e2e` Tart VM. Recapture them after any visible UI change:
+
+```bash
+make screenshots                       # needs the VM running: tart run strip-e2e
+make screenshots SHOTS="search help"   # a subset
+```
+
+The scene, the shot list and the traps are in `scripts/screenshots/` and the `screenshots` skill
+(`.claude/skills/screenshots/SKILL.md`). Look at every capture before committing it.
 
 `og-image.png` and `apple-touch-icon.png` are generated from the SVGs. Regenerate them after
 editing the banner or the favicon (requires Google Chrome):

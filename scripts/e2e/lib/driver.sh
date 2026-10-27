@@ -31,6 +31,7 @@ send_hotkey() {
     gapLooser) code=30; mods="control down, option down" ;;
     toggleOverview) code=49; mods="control down, option down" ;;
     toggleSearch) code=3; mods="control down, option down" ;;
+    toggleHelp) code=44; mods="control down, option down" ;;
     *)
       echo "send_hotkey: unknown command '$name'" >&2
       return 1

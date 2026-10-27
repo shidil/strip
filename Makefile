@@ -8,7 +8,7 @@ REQUIRE_SIGNING ?= 0
 CODESIGN_OPTIONS ?=
 DIST_DIR := .build/dist
 
-.PHONY: build bundle verify-bundle archive notarized-release ci run open profile test e2e e2e-vm e2e-vm-check clean setup-signing
+.PHONY: build bundle verify-bundle archive notarized-release ci run open profile test e2e e2e-vm e2e-vm-check screenshots clean setup-signing
 
 ## Compile the Swift package.
 build:
@@ -124,6 +124,11 @@ e2e-vm: bundle
 ## Accessibility grant, Terminal's UI-scripting grants.
 e2e-vm-check: bundle
 	@bash scripts/e2e/vm/run.sh --check
+
+## Recapture the website/README screenshots from a release build in the strip-e2e VM, then publish
+## them to site/assets/img/screenshots/. SHOTS="search help" for a subset. See scripts/screenshots/.
+screenshots:
+	@bash scripts/screenshots/capture.sh $(SHOTS)
 
 clean:
 	swift package clean
