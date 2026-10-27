@@ -380,9 +380,11 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
   left out. If spill turns out to be common in daily use, revisit: `StripController.apply()` already
   detects the condition (`spillsOffDisplay`), so demotion would be a targeted `state.cols` adjustment
   gated on it.
-- **Window & tab search (Spotlight-style, inside Overview)** (M → L with tab sources) — 🧪 **prototype
-  on `feat/window-search` (2026-10-26), hands-on tested by the user: success.** Goal: one keyboard interface to
-  every pane you can reach — windows *and* the tabs inside them — built on the Overview grid.
+- **Window & tab search (Spotlight-style, inside Overview)** (M → L with tab sources) — ✅ **shipped
+  2026-10-28** (prototyped on `feat/window-search` from 2026-10-26, hands-on tested by the user, then
+  hardened for merge with e2e coverage in the Tart VM). Goal: one keyboard interface to every pane you
+  can reach — windows *and* the tabs inside them — built on the Overview grid. Open follow-ups are
+  under "Still open", "Known gaps" and "Next phases" below.
   - **Feasibility findings (probed live 2026-10-26, read-only AX walk of each window, skipping
     `AXWebArea`):**
     | App | Tabs via AX? | Notes |
