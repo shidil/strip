@@ -46,11 +46,12 @@ accessory app, so its menu is `menu bar 1`, not the usual app's `menu bar 2`).
 | Minimap position (all 4 edges, via menu) | |
 | Focus-ring toggle (via menu) | |
 | Overview open/close (via menu) | Clicking an Overview card or rail chip (needs positioned clicks on SwiftUI content) |
-| Search: ⌃⌥F open/close, `/` from the grid, ⌫ back to the grid | Tabs in real browsers (no Firefox/Chromium in the VM) and tab *peek* thumbnails |
+| Search: ⌃⌥F open/close, `/` from the grid, ⌫ back to the grid | Firefox tabs (not installed in the VM) |
 | Search: typing, ⌫ / ⌥⌫, ↑↓ selection, Esc clears then closes | IME / dead-key input (the event tap can't compose it — by design) |
 | Search: type an app name → ↩ centers and focuses it | |
 | Search: ⌘W swallowed; ⌘Tab closes the Overview (search and grid) | |
 | Search: native-tab pick (TextEdit, two merged docs) keeps the picked tab | |
+| Search: browser tabs in Google Chrome (VM only) and Safari: tab scan, peek + restore, pick presses once | |
 | Widen/narrow the focus window (⌃⌥= / ⌃⌥-) | |
 | Grow/shrink window height (⌃⌥↑ / ⌃⌥↓) | |
 | Tighten/loosen gaps & padding (⌃⌥[ / ⌃⌥]) | |
@@ -251,6 +252,13 @@ signing identities at all — is ad-hoc signed, with a new signature every build
 silently invalidated the VM's Accessibility grant and needed a manual re-grant. `setup.sh` now
 creates a fixed self-signed identity *inside the guest* (guest-only, using `scripts/setup-signing.sh`)
 and `run.sh` re-signs every pushed build with it, so the grants are made once.
+
+**Never drive apps with `osascript` straight through `tart exec`.** Under tart-guest-agent an Apple
+Event to System Events (or any app) raises a consent dialog in the VM ("tart-guest-agent wants to
+control …") and the call hangs until `AppleEvent timed out`; the dialog can then sit over the desktop.
+Read-only shell checks (`pgrep`, `cat`, `codesign`) via `tart exec` are fine; anything that scripts an
+app goes through the guest Terminal session like `run.sh` does. (`tell application "Terminal" to do
+script …` itself is the one exception the scripts rely on — Terminal's consent was granted in setup.)
 
 **Keep a golden snapshot.** The original `strip-e2e` VM was lost when the Mac was reset, and its
 grants with it. After setup, `tart stop strip-e2e && tart clone strip-e2e strip-e2e-golden` (a

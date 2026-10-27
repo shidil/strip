@@ -393,7 +393,7 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
     | Slack, Reviu | – | No tabs. Reviu: 6 nodes took 20 ms — cost is **per-app AX latency, not tree size**. |
     | Terminal.app, Finder (native NSWindow tabs) | ✅ user-verified | `AXTabGroup` of radio buttons. Background native tabs are separate hidden NSWindows — `refresh()` already drops them. |
     | Safari | ✅ after fix | **Different shape:** tab bar is an `AXOpaqueProviderGroup` ("Tab bar, N tabs") of `AXRadioButton`/`AXTabButton`; its only `AXTabGroup` wraps the *page content* (zero buttons — the prototype found it and read 0 tabs). Fixed by finding tab *buttons* (`isTabButton`) and treating their parent as the bar. |
-    | Chromium-family | expected ✅, **unverified** | Tab strip is native/views AX; must not force `AXEnhancedUserInterface`/web AX (expensive). |
+    | Chromium-family | ✅ e2e-verified (Chrome 156, VM, 2026-10-27) | Found by the generic `isTabButton` walk: 1 group, ~38 nodes, 13–35 ms. Peek and pick work. Other Chromium browsers (Brave, Arc, Edge) not tried. |
     | Electron editors (VS Code tabs) | ❌ practical | Tree only with `AXManualAccessibility` (heavy). Out of scope. |
   - **What the prototype does:** ⌃⌥F opens Overview straight into search; `/` inside Overview switches
     to search. Typing filters the grid to matching windows (best match first) and shows a ranked
@@ -575,8 +575,17 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
         later) did *not* fail: in the VM, TextEdit doesn't switch back when the hidden tab window is
         focused, unlike Terminal on the host. A Terminal/Finder tab fixture would reproduce the
         visible bug; Terminal also hosts the guest runner, so that needs care.
-      - **Still manual:** card/chip clicks (positioned clicks), real browser tabs and peek
-        thumbnails, IME.
+      - **Chromium verified (2026-10-27, VM, Chrome 156):** `scenario_search_chromium_tabs` — the tab
+        strip is found by the generic `isTabButton` walk (1 group, 3 tabs, ~38 nodes, 13–35 ms); a
+        ↓ peek switches the real tab and captures (~127 ms), clearing the query restores it, and a
+        pick presses once and stays. No Chrome tab switch caused a full reconcile. Mutation-checked:
+        putting back the pick's double press fails it (`expected '1', got '2'`). 22/22 twice.
+      - **Safari re-verified (VM):** `scenario_search_safari_tabs`, same checks as Chrome — tab bar
+        found (1 group, ~29 nodes, 17 ms), peek + restore, single-press pick. Safari may add its own
+        Start Page tab, so the fixture pages are titled "… fixture". 23/23 twice.
+      - **Still manual:** card/chip clicks (positioned clicks), Firefox tabs (not in the VM), IME.
+      - **Minor, noticed:** a tab scan still waiting on motion runs after its session ended (its
+        callbacks are orphaned by the generation token, but the AX walk still happens).
   - **Open questions:** filter vs dim the grid; type-to-search directly in Overview; empty query as a
     recent-windows switcher; panel size vs the card grid on a 1440 px display.
   - **Next phases (after feedback):** (a) verify Safari / Chromium / native tabs and add per-app

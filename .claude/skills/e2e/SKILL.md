@@ -52,6 +52,9 @@ guest: `tart exec strip-e2e cat /tmp/strip-e2e.log` (Strip's verbose log for the
 
 ## Limits (manual-only — TESTING.md §2)
 
-Mouse hover and positioned clicks on the SwiftUI overlay (card clicks), real browsers (no
-Firefox/Chromium in the VM), visual polish, held-key auto-repeat, and timing numbers (VM timing isn't
+Mouse hover and positioned clicks on the SwiftUI overlay (card clicks), Firefox tabs (not in the VM;
+Chrome and Safari are covered), visual polish, held-key auto-repeat, and timing numbers (VM timing isn't
 host timing — use the perf-measure skill with xctrace attached to the user's instance).
+
+Don't run app-scripting `osascript` through `tart exec` to poke at the guest — it raises a consent
+dialog in the VM and hangs (TESTING.md §7). Read-only shell commands are fine.

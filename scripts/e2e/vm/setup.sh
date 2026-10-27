@@ -35,7 +35,8 @@ if tart list 2>/dev/null | awk '{print $2}' | grep -qx "$VM_NAME"; then
 elif tart list 2>/dev/null | awk '{print $2}' | grep -qx "$GOLDEN"; then
   echo "Restoring '$VM_NAME' from the golden snapshot '$GOLDEN' (grants included)…"
   tart clone "$GOLDEN" "$VM_NAME" || { echo "✗ clone failed" >&2; exit 1; }
-  echo "✓ Restored. Start it with 'tart run $VM_NAME', then 'make e2e-vm' — no further setup needed."
+  echo "✓ Restored. Start it with 'tart run $VM_NAME', then 'make e2e-vm'. (If the snapshot predates"
+  echo "  Google Chrome, re-run this script once the VM is up: it only installs what's missing.)"
   exit 0
 else
   if tart list 2>/dev/null | grep -qF "$BASE_IMAGE"; then
@@ -89,6 +90,19 @@ g sh -c "security unlock-keychain -p '$GUEST_KEYCHAIN_PASS' login.keychain-db >/
   || { echo "✗ guest codesign failed" >&2; exit 1; }
 g open "$GUEST_APP"
 echo "✓ Strip launched in the guest."
+
+step "4b. Google Chrome (for the Chromium tab scenario)"
+if g test -d "/Applications/Google Chrome.app"; then
+  echo "✓ Google Chrome already installed."
+else
+  echo "Downloading Google Chrome (~270MB) into the guest…"
+  g sh -c 'cd /tmp && curl -sSfL -o chrome.dmg https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg \
+    && hdiutil attach -nobrowse -quiet -mountpoint /tmp/chrome-mnt chrome.dmg \
+    && cp -R "/tmp/chrome-mnt/Google Chrome.app" /Applications/ \
+    && hdiutil detach -quiet /tmp/chrome-mnt && rm -f chrome.dmg' \
+    && echo "✓ Installed Google Chrome." \
+    || echo "✗ Chrome install failed — scenario_search_chromium_tabs will fail until it's installed." >&2
+fi
 
 step "5. Grant: Strip → Accessibility"
 open_pane Privacy_Accessibility

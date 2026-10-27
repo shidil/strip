@@ -41,7 +41,7 @@ SCENARIOS=(
   scenario_focus_ratio
   scenario_window_height
   scenario_gap_padding
-  # Overview search (search_scenarios.sh). The native-tab one adds and removes a 4th window — last.
+  # Overview search (search_scenarios.sh). The tab ones add and remove a 4th window — last.
   scenario_search_open_close
   scenario_search_slash_and_back_to_grid
   scenario_search_editing_and_selection
@@ -49,6 +49,8 @@ SCENARIOS=(
   scenario_search_swallows_cmd_w
   scenario_cmd_tab_leaves_overview
   scenario_search_native_tab_pick
+  scenario_search_chromium_tabs
+  scenario_search_safari_tabs
 )
 
 # Run a subset: `run.sh scenario_slide scenario_search_open_close` or E2E_ONLY="…" (space-separated;

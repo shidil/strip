@@ -153,7 +153,8 @@ scenario_cmd_tab_leaves_overview() {
   wait_for_line "overview: closed \(left\)" "$cp" 3 >/dev/null || { echo "    ✗ ⌘Tab in search: Overview not closed (left)" >&2; ok=1; }
   cp=$(checkpoint); send_key escape
   sleep 1
-  if tail -n "+$((cp + 1))" "$STRIP_E2E_LOG" | grep -qE "search:|overview:"; then
+  # Only lines a key can cause: a tab scan still settling from the session can log after it ends.
+  if tail -n "+$((cp + 1))" "$STRIP_E2E_LOG" | grep -qE "search: (state|key|begin|pick|end)|overview: (open|closed)"; then
     echo "    ✗ a key after ⌘Tab still reached Strip" >&2; ok=1
   fi
 
@@ -227,3 +228,117 @@ _native_tab_cleanup() {
   wait_for_total_count 3 "$cp" 5 >/dev/null || echo "    (cleanup: Strip didn't settle back at 3 windows)" >&2
   rm -rf "$TABS_DIR"
 }
+
+# Browser tabs: three local pages ("alpha fixture", "beta fixture", "gamma fixture") in one window. Covers the
+# tab scan on the browser's tab bar, tab *peek* (↓ onto a tab result switches the real tab; clearing
+# the query puts it back) and a tab pick (one press, and the picked tab stays). Window titles are read
+# via System Events (Accessibility) — the browsers' own AppleScript would need an Automation grant.
+# Each browser has a launcher; the checks are shared. Chrome and Safari expose different tab-bar
+# shapes (an AXTabGroup vs an AXOpaqueProviderGroup — PLAN.md feasibility table).
+PAGES_DIR="/tmp/strip-e2e-pages"
+_front_title() {
+  osascript -e "tell application \"System Events\" to tell process \"$1\" to get name of window 1" 2>/dev/null
+}
+_quit_browser() {
+  osascript -e "tell application \"$1\" to if it is running then quit" >/dev/null 2>&1
+  for _ in $(seq 1 30); do pgrep -x "$1" >/dev/null || break; sleep 0.1; done
+}
+_browser_cleanup() { # $1=app
+  local cp
+  cp=$(checkpoint)
+  _quit_browser "$1"
+  wait_for_total_count 3 "$cp" 5 >/dev/null || echo "    (cleanup: Strip didn't settle back at 3 windows)" >&2
+  rm -rf "$PAGES_DIR"
+}
+_write_pages() {
+  rm -rf "$PAGES_DIR"; mkdir -p "$PAGES_DIR"
+  for t in alpha beta gamma; do
+    printf '<!doctype html><title>%s fixture</title><h1>%s</h1>\n' "$t" "$t" >"$PAGES_DIR/$t.html"
+  done
+}
+_launch_chrome() {
+  open -na "Google Chrome" --args --no-first-run --no-default-browser-check \
+    --disable-search-engine-choice-screen --user-data-dir="$PAGES_DIR/profile" \
+    "file://$PAGES_DIR/alpha.html" "file://$PAGES_DIR/beta.html" "file://$PAGES_DIR/gamma.html"
+}
+_launch_safari() {
+  # Safari may open each file in its own window; merging makes them tabs of one window either way.
+  open -a Safari "$PAGES_DIR/alpha.html" "$PAGES_DIR/beta.html" "$PAGES_DIR/gamma.html"
+  for _ in $(seq 1 50); do [ -n "$(_front_title Safari)" ] && break; sleep 0.2; done
+  sleep 1
+  osascript -e 'tell application "Safari" to activate' \
+    -e 'tell application "System Events" to tell process "Safari" to click menu item "Merge All Windows" of menu "Window" of menu bar 1' \
+    >/dev/null 2>&1
+}
+
+# _browser_tab_scenario <app> <launcher> — the shared checks.
+_browser_tab_scenario() {
+  local app="$1" launch="$2" cp front line block ok=0 hidden presses peeked focus_word
+  [ -d "/Applications/$app.app" ] || { echo "    ✗ $app not installed (vm/setup.sh installs Chrome)" >&2; return 1; }
+  focus_word="${app%% *}" # parse_focus_app reads the first word of the app name
+  _quit_browser "$app"
+  _write_pages
+  cp=$(checkpoint)
+  "$launch"
+  for _ in $(seq 1 50); do [ -n "$(_front_title "$app")" ] && break; sleep 0.2; done
+  sleep 1
+  _resize_window "$app"
+  click_menu "Re-tile / Re-scan"
+  wait_for_total_count 4 "$cp" 8 >/dev/null || { echo "    ✗ Strip never managed one $app window (4 total)" >&2; _browser_cleanup "$app"; return 1; }
+  front=$(_front_title "$app")
+  echo "    ($app front tab: '$front')"
+
+  # Peek: "fixture" hits the window row (its active tab) plus the two other tabs; ↓ selects a tab row.
+  # (Not "page": Safari adds its own "Start Page" tab, so a browser may have more than our 3.)
+  cp=$(checkpoint)
+  _search_open || { _browser_cleanup "$app"; return 1; }
+  line=$(wait_for_line "search: tabs $app .*" "$cp" 3) || { echo "    ✗ tab scan didn't report $app" >&2; ok=1; }
+  echo "    (${line#* search: })"
+  [ "$(grep -oE 'tabs=[0-9]+' <<<"$line" | cut -d= -f2)" -ge 3 ] 2>/dev/null || { echo "    ✗ expected at least 3 $app tabs" >&2; ok=1; }
+  cp=$(checkpoint); type_text "fixture"
+  line=$(_search_state 7 "$cp") || { echo "    ✗ typing 'fixture': no state line" >&2; _search_close; _browser_cleanup "$app"; return 1; }
+  assert_eq "$(_state_field "$line" results)" "3" "'fixture' results (window row + 2 other tabs)" || ok=1
+  cp=$(checkpoint); send_key down
+  line=$(wait_for_line "search: state" "$cp" 3)
+  assert_eq "$(_state_field "$line" kind)" "tab" "↓ lands on a tab row" || ok=1
+  wait_for_line "search: tab press" "$cp" 3 >/dev/null || { echo "    ✗ ↓ onto a tab: no peek press" >&2; ok=1; }
+  sleep 0.5
+  peeked=$(_front_title "$app")
+  [ "$peeked" != "$front" ] || { echo "    ✗ peek didn't switch $app's tab (still '$front')" >&2; ok=1; }
+  wait_for_line "search: peek id=[0-9]+ captured" "$cp" 3 >/dev/null || echo "    (no peek capture logged — Screen Recording not granted?)" >&2
+  cp=$(checkpoint); send_key escape
+  _search_state 0 "$cp" >/dev/null || { echo "    ✗ Esc with a query: not cleared" >&2; ok=1; }
+  wait_for_line "search: tab press" "$cp" 3 >/dev/null || { echo "    ✗ clearing the query: no restore press" >&2; ok=1; }
+  sleep 0.5
+  assert_eq "$(_front_title "$app")" "$front" "$app tab after the peek is restored" || ok=1
+  _search_close || ok=1
+
+  # Pick a tab that isn't showing: one press, and it stays.
+  case "$front" in
+    gamma*) hidden="alpha" ;;
+    *) hidden="gamma" ;;
+  esac
+  cp=$(checkpoint)
+  _search_open || { _browser_cleanup "$app"; return 1; }
+  type_text "$hidden"
+  line=$(_search_state "${#hidden}" "$cp") || { echo "    ✗ typing '$hidden': no state line" >&2; _search_close; _browser_cleanup "$app"; return 1; }
+  assert_eq "$(_state_field "$line" kind)" "tab" "top hit kind for hidden tab '$hidden'" || ok=1
+  cp=$(checkpoint); send_key return
+  wait_for_line "search: pick kind=tab" "$cp" 3 >/dev/null || { echo "    ✗ ↩: no tab pick" >&2; ok=1; }
+  block=$(wait_for_new_apply "$cp" 3) || { echo "    ✗ ↩: no apply after the pick" >&2; ok=1; }
+  sleep 1.5
+  presses=$(tail -n "+$((cp + 1))" "$STRIP_E2E_LOG" | grep -c "search: tab press")
+  assert_eq "$presses" "1" "tab presses for one pick" || ok=1
+  case "$(_front_title "$app")" in
+    "$hidden fixture"*) ;;
+    *) echo "    ✗ $app front tab after picking '$hidden': '$(_front_title "$app")'" >&2; ok=1 ;;
+  esac
+  [ -n "$block" ] && { assert_eq "$(parse_focus_app "$block")" "$focus_word" "picked tab's window has focus" || ok=1; }
+
+  [ "$ok" == 0 ] || _search_close 2>/dev/null
+  _browser_cleanup "$app"
+  return "$ok"
+}
+
+scenario_search_chromium_tabs() { _browser_tab_scenario "Google Chrome" _launch_chrome; }
+scenario_search_safari_tabs() { _browser_tab_scenario Safari _launch_safari; }
