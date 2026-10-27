@@ -7,6 +7,7 @@
 - [Privacy and permissions](../PRIVACY.md)
 - [Security policy](../SECURITY.md)
 - [Testing](../TESTING.md)
+- [Website](../site/README.md): the static landing page in `site/`
 
 ## Architecture and Decisions
 
