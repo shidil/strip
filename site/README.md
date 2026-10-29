@@ -41,10 +41,11 @@ Opening `index.html` directly from disk also works.
 ## Images
 
 **Screenshots** (`assets/img/screenshots/*.jpg`, also used by the repo README) are real captures of a
-release build in the `strip-e2e` Tart VM. Recapture them after any visible UI change:
+release build in the `strip-shots` Tart VM (a fixed 3440×1440 ultrawide clone of `strip-e2e`).
+Recapture them after any visible UI change:
 
 ```bash
-make screenshots                       # needs the VM running: tart run strip-e2e
+make screenshots                       # needs the VM running: tart run strip-shots
 make screenshots SHOTS="search help"   # a subset
 ```
 

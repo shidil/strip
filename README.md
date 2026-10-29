@@ -22,7 +22,16 @@ parked  ←  [ window ] [ window ] [ FOCUSED ] [ window ] [ window ]  →  parke
 Strip is built with Swift and AppKit. It uses macOS Accessibility for window control and does not
 require disabling System Integrity Protection or installing a scripting addition.
 
-![Strip in three-up layout: Chrome in the center slot with a green focus ring, Terminal on the left, Finder on the right, the status pill at the top and the film rail at the bottom.](site/assets/img/screenshots/strip.jpg)
+![Strip in three-up layout on a 3440×1440 ultrawide: Chrome in the center slot with a green focus ring, Terminal on the left, Finder on the right, the status pill at the top and the film rail at the bottom.](site/assets/img/screenshots/strip.jpg)
+
+<p>
+  <img src="site/assets/img/screenshots/monocle.jpg" width="49%"
+       alt="Monocle layout: one Chrome window centered, its neighbors parked just past the screen edges.">
+  <img src="site/assets/img/screenshots/pinned.jpg" width="49%"
+       alt="Pinned layout: Finder holds the right slot while Safari and Chrome roll past it.">
+</p>
+
+*Left: monocle (<kbd>⌃⌥1</kbd>). Right: Finder pinned (<kbd>⌃⌥P</kbd>) while the film rolls.*
 
 ## What It Does
 
