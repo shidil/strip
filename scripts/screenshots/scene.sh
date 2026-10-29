@@ -5,6 +5,7 @@
 # (Accessibility, Developer Tools, Screen Recording — scripts/e2e/vm/setup.sh step 7).
 #
 #   scene.sh <work dir> [shot ...]     # shots: strip overview search search-peek help (default: all)
+#   SHOT_HEIGHT=0.90 scene.sh …        # window height (Strip's heightFraction; 0.05 steps, default 0.85)
 #
 # Writes <work dir>/out/<shot>.png (full-display Retina PNGs) and <work dir>/out/exitcode.
 # Reuses the e2e driver/log helpers (scripts/e2e/lib) for hotkeys and for waiting on Strip's log.
@@ -183,10 +184,15 @@ center_on() {
   done
   fail "couldn't center $1"
 }
-# 80% height (default 100%, ⌃⌥↓ = −5%), so the status pill and the film rail sit on the wallpaper
-# instead of over the windows' toolbars and content.
-for _ in 1 2 3 4; do send_hotkey shorter; sleep 0.3; done
-wait_for_line "height: 0.80" 0 4 >/dev/null || echo "  (height didn't reach 0.80)" >&2
+# Shorter than Strip's full-height default (⌃⌥↓ = −5%), so the status pill and the film rail sit on
+# the wallpaper instead of over the windows' toolbars and content. 0.85 is the tallest that clears
+# the rail on the VM's 949pt display.
+SHOT_HEIGHT="${SHOT_HEIGHT:-0.85}"
+steps=$(awk -v h="$SHOT_HEIGHT" 'BEGIN { printf "%d", (1 - h) / 0.05 + 0.5 }')
+for _ in $(seq 1 "$steps"); do send_hotkey shorter; sleep 0.3; done
+if [ "$steps" -gt 0 ]; then
+  wait_for_line "height: $SHOT_HEIGHT" 0 4 >/dev/null || echo "  (height didn't reach $SHOT_HEIGHT)" >&2
+fi
 center_on Google
 sleep 1.5 # let the springs and the focus ring settle
 
