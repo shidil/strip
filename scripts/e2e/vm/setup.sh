@@ -115,12 +115,16 @@ open_pane Privacy_ScreenCapture
 pause "In the VM: toggle Strip ON in Screen & System Audio Recording. Choose 'Quit & Reopen' (or 'Later') if asked."
 g sh -c "pkill -x Strip" >/dev/null 2>&1
 
-step "7. Grant: Terminal → Accessibility and Developer Tools"
+step "7. Grant: Terminal → Accessibility, Developer Tools and Screen Recording"
 echo "The suite runs inside a guest Terminal session; UI scripting from it needs both (TESTING.md §7)."
 open_pane Privacy_Accessibility
 pause "In the VM: add Terminal to Accessibility (+, Cmd-Shift-G, /System/Applications/Utilities/Terminal.app) and toggle it ON."
 open_pane Privacy_DevTools
 pause "In the VM: add Terminal to Developer Tools and toggle it ON."
+echo "Screenshots (scripts/screenshots/) call screencapture from the same Terminal session; without"
+echo "this grant it captures nothing."
+open_pane Privacy_ScreenCapture
+pause "In the VM: toggle Terminal ON in Screen & System Audio Recording (+ if it isn't listed)."
 
 step "8. Automation prompts (one per app the suite drives)"
 cat >/tmp/strip-e2e-automation.sh <<'EOF'

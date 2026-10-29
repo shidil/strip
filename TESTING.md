@@ -229,7 +229,7 @@ scripts/e2e/vm/setup.sh
 Walks through: installing Tart, cloning the base image (§ below), booting it, disabling
 sleep/screensaver, creating the guest's signing identity, installing Strip, then the one-time privacy
 grants — it opens each System Settings pane in the VM and waits while you flip the toggle (Strip:
-Accessibility and Screen Recording; Terminal: Accessibility and Developer Tools; then the Automation
+Accessibility and Screen Recording; Terminal: Accessibility, Developer Tools and Screen Recording (for `make screenshots`); then the Automation
 prompts for each app the suite drives). It ends with `run.sh --check`. Safe to re-run partway through.
 
 **Regular runs**, once set up:

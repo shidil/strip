@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <title>Strip — a film-strip window manager for macOS</title>
-  <meta name="description" content="Strip is an open-source macOS window manager where the center slot never moves: windows roll past it like film through a projector gate. No SIP changes.">
+  <meta name="description" content="Strip is an open-source macOS window manager where the center slot never moves: windows roll past it like film through a projector gate. Search every window and browser tab. No SIP changes.">
   <link rel="canonical" href="https://shidil.github.io/strip/">
 
   <meta name="color-scheme" content="dark">
@@ -42,6 +42,15 @@
     "operatingSystem": "macOS 14 or later",
     "license": "https://opensource.org/licenses/MIT",
     "isAccessibleForFree": true,
+    "featureList": [
+      "Fixed center slot with windows that roll past it",
+      "Monocle, two-up and three-up layouts",
+      "Pin any slot",
+      "Overview with live window thumbnails",
+      "Search across windows and browser tabs",
+      "Keyboard-driven, no SIP changes"
+    ],
+    "screenshot": "https://shidil.github.io/strip/assets/img/screenshots/strip.jpg",
     "author": { "@type": "Person", "name": "Shidil Eringa" },
     "sameAs": "https://github.com/shidil/strip"
   }
@@ -58,7 +67,9 @@
       </a>
       <nav class="site-nav" aria-label="Primary">
         <a href="#how-it-works">How it works</a>
-        <a href="#features">Features</a>
+        <a href="#search">Search</a>
+        <a class="site-nav__secondary" href="#features">Features</a>
+        <a class="site-nav__secondary" href="#keyboard">Keys</a>
         <a href="#get-started">Get started</a>
         <a class="site-nav__github" href="https://github.com/shidil/strip">GitHub</a>
       </nav>
@@ -85,12 +96,26 @@
       </div>
     </section>
 
+    <!-- Showcase: a real capture, so the concept art below has something true to point at ------->
+    <section class="showcase" aria-label="Strip running on macOS">
+      <div class="container">
+        <figure class="shot shot--hero">
+          <img src="assets/img/screenshots/strip.jpg" width="2000" height="1255"
+               alt="A Mac desktop managed by Strip in three-up layout: Chrome in the center slot with a green focus ring, a Terminal running top on the left, a Finder window on the right, a status pill at the top and the film rail of app icons at the bottom.">
+          <figcaption>
+            Three&#8209;up on a real Mac. The focused window owns the center slot, its neighbors
+            fill the sides, and the film rail at the bottom shows every window on the strip.
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
     <!-- Explainer: scene text is plain HTML; explainer.js adds the animated stage + controls ----->
     <section id="how-it-works" class="section explainer" aria-labelledby="how-title" data-explainer>
       <div class="container">
         <header class="section__header">
           <h2 id="how-title">How it works</h2>
-          <p>Five ideas, one strip of film.</p>
+          <p>Six ideas, one strip of film.</p>
         </header>
 
         <div class="explainer__player" tabindex="0" aria-roledescription="walkthrough"
@@ -149,6 +174,17 @@
                 open more gates onto it. Switch anytime with <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd>.
               </p>
             </li>
+            <li class="scene" data-scene="find" data-tone="blue">
+              <p class="scene__tags">
+                <span class="pill">Find anything</span>
+                <span class="pill pill--outline">new</span>
+              </p>
+              <h3>Lost a window? Type its name.</h3>
+              <p>
+                Press <kbd>F</kbd> and type a few letters. Strip finds the window, or the browser tab
+                inside it, and rolls it straight into the center slot. No hunting along the film.
+              </p>
+            </li>
           </ol>
 
           <!-- Controls exist only once explainer.js has taken over (see .js in site.css). -->
@@ -196,6 +232,36 @@
       </div>
     </section>
 
+    <!-- Search ---------------------------------------------------------------------------------->
+    <section id="search" class="section" aria-labelledby="search-title">
+      <div class="container split">
+        <div class="split__text">
+          <header class="section__header">
+            <p class="pill pill--blue">New &middot; window &amp; tab search</p>
+            <h2 id="search-title">Find any window. Or any tab.</h2>
+            <p>
+              Press <kbd>⌃⌥F</kbd> and start typing. The Overview narrows to the windows that match,
+              and a ranked list shows the tabs inside them too.
+            </p>
+          </header>
+          <ul class="checklist">
+            <li>Searches tabs in Firefox, Safari and Chrome, plus native tabs in Terminal and Finder.</li>
+            <li>Arrow onto a browser tab and its card previews that tab. <kbd>↩</kbd> takes you there;
+              <kbd>Esc</kbd> puts every tab back the way it was.</li>
+            <li>Typing never takes focus from your apps. <kbd>⌘Tab</kbd> or <kbd>⌘Space</kbd> closes
+              the Overview.</li>
+            <li>Tab titles stay in memory. Your queries and the tabs Strip finds never reach its log,
+              which records only counts.</li>
+          </ul>
+        </div>
+        <figure class="shot">
+          <img src="assets/img/screenshots/search.jpg" width="2000" height="1255" loading="lazy"
+               alt="Strip's Overview in search mode: the query “spring” lists a Chrome tab, Spring tuning, and a Safari tab, Spring onion pancakes. The grid has narrowed to those two windows, and Chrome's card previews the selected tab.">
+          <figcaption>“spring” finds a tab in Chrome and one in Safari; the selected tab previews in its card.</figcaption>
+        </figure>
+      </div>
+    </section>
+
     <!-- Features -------------------------------------------------------------------------------->
     <section id="features" class="section" aria-labelledby="features-title">
       <div class="container">
@@ -203,28 +269,60 @@
           <h2 id="features-title">Built for real macOS windows</h2>
           <p>Not a mock-up: Strip moves the actual windows of the apps you already use.</p>
         </header>
+        <div class="gallery">
+          <figure class="shot">
+            <img src="assets/img/screenshots/overview.jpg" width="2000" height="1255" loading="lazy"
+                 alt="Strip's Overview: live thumbnails of every window on the film, laid out in rows over a blurred desktop, with the active window outlined.">
+            <figcaption>Overview (<kbd>⌃⌥Space</kbd>): every window on the film as a live thumbnail.</figcaption>
+          </figure>
+          <figure class="shot">
+            <img src="assets/img/screenshots/help.jpg" width="2000" height="1255" loading="lazy"
+                 alt="Strip's keyboard help overlay listing every shortcut over a dimmed desktop.">
+            <figcaption>Keyboard help (<kbd>⌃⌥/</kbd>): every shortcut, one keypress away.</figcaption>
+          </figure>
+        </div>
         <ul class="features">
           <li class="feature">
             <h3>Smooth, real motion</h3>
             <p>Spring-animated moves at your display&rsquo;s refresh rate, using the public macOS
-              Accessibility API. No SIP changes, no scripting additions.</p>
+              Accessibility API. No SIP changes, no scripting additions. Pick the feel: Track, Pop
+              or Glide.</p>
           </li>
           <li class="feature">
             <h3>Tiles as you work</h3>
-            <p>New windows open right next to the one you&rsquo;re using. Dialogs, palettes and
-              tiny windows float instead of joining the film.</p>
+            <p>New windows open right next to the one you&rsquo;re using. Close the centered window
+              and its neighbor steps in. Dialogs, palettes and tiny windows float instead of joining
+              the film.</p>
           </li>
           <li class="feature">
-            <h3>Pin any slot</h3>
-            <p>Hold a reference window in place while everything else keeps rolling.</p>
+            <h3>Overview and search</h3>
+            <p>See every window as a live thumbnail and move through them with the arrow keys or
+              <kbd>H</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd>. Type to search windows and their tabs.</p>
           </li>
           <li class="feature">
-            <h3>Overview</h3>
-            <p>See every window on the film as a live thumbnail and jump straight to it.</p>
+            <h3>Film rail and focus ring</h3>
+            <p>A compact minimap with app icons and hover previews, docked to any screen edge. A
+              colored ring follows the focused window as it moves.</p>
           </li>
           <li class="feature">
-            <h3>Film rail</h3>
-            <p>A compact minimap with app icons and hover previews, docked to any screen edge.</p>
+            <h3>Respects your hands</h3>
+            <p>Strip pauses while you drag. Move a window and it springs back to its slot; resize
+              the main window and Strip keeps your size, reflowing the layout around it.</p>
+          </li>
+          <li class="feature">
+            <h3>Fits stubborn apps</h3>
+            <p>Apps with a minimum or fixed size, like Console or System Settings, get slots that fit
+              them instead of spilling over their neighbors. Strip learns each window&rsquo;s limits.</p>
+          </li>
+          <li class="feature">
+            <h3>Keyboard focus follows</h3>
+            <p>Rolling the film makes the centered window the active one, so you can type into it
+              straight away. No clicking to catch up.</p>
+          </li>
+          <li class="feature">
+            <h3>Stays out of the way</h3>
+            <p>Lives in the menu bar with no Dock icon, never takes focus for itself, and remembers
+              your layout, sizes and rail position across restarts.</p>
           </li>
           <li class="feature">
             <h3>Always an escape hatch</h3>
@@ -242,6 +340,7 @@
           <h2 id="keyboard-title">Keyboard first</h2>
           <p>Every command sits behind <kbd>⌃</kbd><kbd>⌥</kbd> (Control + Option).</p>
         </header>
+        <!-- Mirrors HelpOverlayView.rows (the in-app cheatsheet); keep the two in step. -->
         <div class="table-scroll">
           <table class="keys-table">
             <thead>
@@ -249,18 +348,51 @@
             </thead>
             <tbody>
               <tr><td><kbd>⌃⌥H</kbd> / <kbd>⌃⌥L</kbd></td><td>Roll the film to the previous / next window</td></tr>
-              <tr><td><kbd>⌃⌥J</kbd> / <kbd>⌃⌥K</kbd></td><td>Move focus between slots</td></tr>
+              <tr><td><kbd>⌃⌥J</kbd> / <kbd>⌃⌥K</kbd>, <kbd>⌃⌥Tab</kbd></td><td>Move focus between slots</td></tr>
               <tr><td><kbd>⌃⌥⇧H</kbd> / <kbd>⌃⌥⇧L</kbd></td><td>Swap the focused window with its neighbor</td></tr>
               <tr><td><kbd>⌃⌥1</kbd> <kbd>⌃⌥2</kbd> <kbd>⌃⌥3</kbd></td><td>Monocle, two&#8209;up, three&#8209;up</td></tr>
               <tr><td><kbd>⌃⌥P</kbd></td><td>Pin or unpin the focused slot</td></tr>
               <tr><td><kbd>⌃⌥E</kbd></td><td>Toggle focus emphasis / equal widths</td></tr>
               <tr><td><kbd>⌃⌥=</kbd> / <kbd>⌃⌥-</kbd></td><td>Widen / narrow the focused window</td></tr>
+              <tr><td><kbd>⌃⌥↑</kbd> / <kbd>⌃⌥↓</kbd></td><td>Make windows taller / shorter</td></tr>
+              <tr><td><kbd>⌃⌥[</kbd> / <kbd>⌃⌥]</kbd></td><td>Tighten / loosen gaps and padding</td></tr>
+              <tr><td><kbd>⌃⌥T</kbd></td><td>Cycle the motion style: Track, Pop, Glide</td></tr>
               <tr><td><kbd>⌃⌥Space</kbd></td><td>Overview</td></tr>
-              <tr><td><kbd>⌃⌥T</kbd></td><td>Cycle the motion style</td></tr>
+              <tr><td><kbd>⌃⌥F</kbd></td><td>Search windows and tabs</td></tr>
               <tr><td><kbd>⌃⌥0</kbd></td><td>Release all windows / resume</td></tr>
               <tr><td><kbd>⌃⌥/</kbd></td><td>Show every shortcut</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="keys-grid">
+          <div>
+            <h3>Inside the Overview</h3>
+            <div class="table-scroll">
+              <table class="keys-table">
+                <tbody>
+                  <tr><td><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> or <kbd>H</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></td><td>Move between cards</td></tr>
+                  <tr><td><kbd>↩</kbd></td><td>Go to the window</td></tr>
+                  <tr><td><kbd>/</kbd></td><td>Start searching</td></tr>
+                  <tr><td><kbd>Esc</kbd> or <kbd>Space</kbd></td><td>Close</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h3>While searching</h3>
+            <div class="table-scroll">
+              <table class="keys-table">
+                <tbody>
+                  <tr><td><kbd>↑</kbd><kbd>↓</kbd>, <kbd>Tab</kbd>, <kbd>⌃N</kbd>/<kbd>⌃P</kbd></td><td>Choose a result</td></tr>
+                  <tr><td><kbd>↩</kbd></td><td>Go to the window or tab</td></tr>
+                  <tr><td><kbd>⌫</kbd> on an empty query</td><td>Back to the grid</td></tr>
+                  <tr><td><kbd>⌃W</kbd> / <kbd>⌃U</kbd> or <kbd>⌘⌫</kbd></td><td>Delete a word / clear</td></tr>
+                  <tr><td><kbd>Esc</kbd></td><td>Clear the query, then close</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -291,12 +423,36 @@
             <h3>Build from source</h3>
             <pre class="code"><code>git clone https://github.com/shidil/strip.git
 cd strip
+make setup-signing   # once: a local signing identity
 make test
 make open</code></pre>
             <p class="muted">
               <code>make open</code> builds the app and launches it through macOS, which is what lets
               the Accessibility grant apply. Full instructions are in the
               <a href="https://github.com/shidil/strip#readme">README</a>.
+            </p>
+          </div>
+        </div>
+
+        <div class="start-grid start-grid--notes">
+          <div>
+            <h3>Why the signing step?</h3>
+            <p class="muted">
+              macOS ties Accessibility and Screen Recording permission to the app&rsquo;s code signature.
+              Without a stable identity, every rebuild looks like a new app and you have to grant
+              permission again. <code>make setup-signing</code> creates a self&#8209;signed identity in
+              your login keychain, for local builds only.
+              <a href="https://github.com/shidil/strip/blob/main/docs/DEVELOPMENT_SIGNING.md">More on signing</a>.
+            </p>
+          </div>
+          <div>
+            <h3>If something goes wrong</h3>
+            <p class="muted">
+              Press <kbd>⌃⌥0</kbd> to put every window back and pause Strip, or quit it from the menu
+              bar. Permission trouble? Open a
+              <a href="https://github.com/shidil/strip/issues/new?template=permission_setup.yml">setup issue</a>.
+              To remove Strip, follow the
+              <a href="https://github.com/shidil/strip#uninstall">uninstall steps</a>.
             </p>
           </div>
         </div>
@@ -332,9 +488,24 @@ make open</code></pre>
               ultrawide. Multi-display and Spaces support are deliberately deferred.</p>
           </details>
           <details>
+            <summary>Which apps does tab search work with?</summary>
+            <p>Firefox, Safari and Google Chrome, plus apps with native macOS tabs such as Terminal and
+              Finder. Strip reads tab bars through the Accessibility API, so it needs no browser
+              extension and no extra permission. Other Chromium browsers (Brave, Arc, Edge) may work
+              but haven&rsquo;t been tested.</p>
+          </details>
+          <details>
+            <summary>Does it have workspaces?</summary>
+            <p>Not yet; workspaces (several independent strips, switched by hotkey) are next on the
+              roadmap. After that: launch at login, a config file for hotkeys and per&#8209;app rules,
+              and vertical columns inside each slot. Follow along in the
+              <a href="https://github.com/shidil/strip/blob/main/PLAN.md">project plan</a>.</p>
+          </details>
+          <details>
             <summary>Does Strip collect any data?</summary>
             <p>No. It contains no networking, telemetry, analytics or update checks. Overview
-              thumbnails are held in memory and never written to disk. See the
+              thumbnails and the tab titles search reads are held in memory and never written to disk.
+              Search queries never reach Strip&rsquo;s local diagnostic log. See the
               <a href="https://github.com/shidil/strip/blob/main/PRIVACY.md">privacy notes</a>.</p>
           </details>
         </div>
