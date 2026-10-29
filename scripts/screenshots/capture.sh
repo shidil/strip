@@ -6,6 +6,7 @@
 #   scripts/screenshots/capture.sh search help      # only some shots
 #   scripts/screenshots/capture.sh --no-build …     # reuse the existing .build/Strip.app
 #   scripts/screenshots/capture.sh --raw-only …     # stop after pulling the PNGs (no publish)
+#   SHOT_HEIGHT=0.90 scripts/screenshots/capture.sh # window height (0.05 steps; default 0.85)
 #
 # Pipeline: make bundle CONFIG=release → push the app, scripts/e2e/lib and scene.sh into the guest →
 # re-sign with the guest's stable identity (keeps its privacy grants valid) → run scene.sh inside a
@@ -72,7 +73,7 @@ end tell' >/dev/null 2>&1
 
 # Run scene.sh as a child of a real guest Terminal session: UI scripting and screencapture need that
 # Terminal's grants, which a plain `tart exec` doesn't have (TESTING.md §7).
-g osascript -e "tell application \"Terminal\" to do script \"bash $GUEST_DIR/scripts/screenshots/scene.sh $GUEST_DIR $SHOTS > $GUEST_LOG 2>&1\"" >/dev/null \
+g osascript -e "tell application \"Terminal\" to do script \"SHOT_HEIGHT=${SHOT_HEIGHT:-0.85} bash $GUEST_DIR/scripts/screenshots/scene.sh $GUEST_DIR $SHOTS > $GUEST_LOG 2>&1\"" >/dev/null \
   || { echo "✗ couldn't start the scene in a guest Terminal" >&2; exit 1; }
 
 elapsed=0 shown=0 code=""

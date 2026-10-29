@@ -16,6 +16,7 @@ files, so one run updates both.
 ```sh
 make screenshots                              # every shot (~1.5 min)
 make screenshots SHOTS="search help"          # a subset
+SHOT_HEIGHT=0.80 make screenshots             # window height (0.05 steps; default 0.85)
 scripts/screenshots/capture.sh --no-build --raw-only strip   # iterate on the scene: reuse the build, skip publishing
 scripts/screenshots/publish.sh strip          # publish a raw capture you've checked
 ```
@@ -45,6 +46,9 @@ Then publish, and update the `alt` text in `site/index.html` and `README.md` if 
 - **Never resize a window Strip already manages.** Strip reads the size back and learns it as the
   app's minimum width (a 60% resize became Terminal `min=905`). `scene.sh` stages and positions every
   window *before* launching Strip; the film order is the windows' left-to-right on-screen order.
+- **Window height 0.85 is the ceiling.** Strip's default (1.0) puts the status pill over the windows'
+  tab bars and the rail over their content; 0.90 still lets the rail cover the bottom ~16px; 0.80
+  leaves visibly empty bands. Windows are centered vertically, so each step moves both edges.
 - **Real minimum widths on the VM's 1512pt display:** Finder 501, Chrome 500, Safari 574, Preview 708.
   Only Terminal fits a narrow side slot, which is why Preview and Safari stay parked in the hero.
 - **Typing never peeks a tab.** Peek follows ↑/↓ only, so the scene presses ↓ then ↑.
