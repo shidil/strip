@@ -560,8 +560,10 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .shot figcaption { color: var(--text-muted); font-size: 0.9rem; text-wrap: pretty; }
 
 .showcase { margin-top: clamp(-72px, -6vw, -40px); padding-bottom: clamp(48px, 7vw, 88px); position: relative; }
-.shot--hero { max-width: 1000px; margin-inline: auto; }
-.shot--hero figcaption { text-align: center; }
+.shot--hero figcaption { max-width: 720px; margin-inline: auto; text-align: center; }
+/* Two ultrawide layout shots under the hero. */
+.gallery--layouts { margin: 32px 0 0; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+@media (max-width: 900px) { .gallery--layouts { grid-template-columns: 1fr; } }
 
 .split { display: grid; gap: clamp(28px, 4vw, 48px); align-items: center; }
 @media (min-width: 960px) {

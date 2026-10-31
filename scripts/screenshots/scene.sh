@@ -4,7 +4,8 @@
 # (capture.sh starts it), because UI scripting and screencapture both need that Terminal's grants
 # (Accessibility, Developer Tools, Screen Recording — scripts/e2e/vm/setup.sh step 7).
 #
-#   scene.sh <work dir> [shot ...]     # shots: strip overview search search-peek help (default: all)
+#   scene.sh <work dir> [shot ...]     # shots: strip monocle pinned overview search search-peek help
+#                                      # (default: all)
 #   SHOT_HEIGHT=0.90 scene.sh …        # window height (Strip's heightFraction; 0.05 steps, default 0.85)
 #
 # Writes <work dir>/out/<shot>.png (full-display Retina PNGs) and <work dir>/out/exitcode.
@@ -12,7 +13,7 @@
 set -uo pipefail
 
 WORK="$1"; shift
-SHOTS="${*:-strip overview search search-peek help}"
+SHOTS="${*:-strip monocle pinned overview search search-peek help}"
 OUT="$WORK/out"
 PAGES="$WORK/pages"
 APP="$WORK/.build/Strip.app"
@@ -186,7 +187,7 @@ center_on() {
 }
 # Shorter than Strip's full-height default (⌃⌥↓ = −5%), so the status pill and the film rail sit on
 # the wallpaper instead of over the windows' toolbars and content. 0.85 is the tallest that clears
-# the rail on the VM's 949pt display.
+# the rail (checked on the 1512×949 and 3440×1440 displays).
 SHOT_HEIGHT="${SHOT_HEIGHT:-0.85}"
 steps=$(awk -v h="$SHOT_HEIGHT" 'BEGIN { printf "%d", (1 - h) / 0.05 + 0.5 }')
 for _ in $(seq 1 "$steps"); do send_hotkey shorter; sleep 0.3; done
@@ -197,6 +198,33 @@ center_on Google
 sleep 1.5 # let the springs and the focus ring settle
 
 if wants strip; then shot strip; fi
+
+if wants monocle; then
+  cp=$(checkpoint); send_hotkey cols1
+  wait_for_cols 1 "$cp" 3 >/dev/null || fail "monocle: never reached 1 column"
+  sleep 1.5
+  shot monocle
+  cp=$(checkpoint); send_hotkey cols3; wait_for_cols 3 "$cp" 3 >/dev/null; sleep 1
+fi
+
+if wants pinned; then
+  # Pin the right slot (Finder), focus back to the center, then roll the film: Finder holds its
+  # slot (gold pin dot on its rail chip, "Hybrid" in the status pill) while the others move past.
+  send_hotkey focusNext; sleep 0.4
+  cp=$(checkpoint); send_hotkey togglePin
+  block=$(wait_for_new_apply "$cp" 3) && grep -q pinned <<<"$block" || fail "pinned: no 'pinned' in the apply line"
+  send_hotkey focusPrev; sleep 0.4
+  cp=$(checkpoint); send_hotkey slideNext; wait_for_new_apply "$cp" 3 >/dev/null; sleep 1.5
+  shot pinned
+  # Unpin and restore the hero layout for the shots that follow.
+  send_hotkey slidePrev; sleep 0.5
+  send_hotkey focusNext; sleep 0.4
+  cp=$(checkpoint); send_hotkey togglePin
+  block=$(wait_for_new_apply "$cp" 3)
+  grep -q pinned <<<"$block" && echo "  (pinned: unpin didn't take)" >&2
+  send_hotkey focusPrev; sleep 0.4
+  center_on Google; sleep 1
+fi
 
 if wants overview; then
   # Thumbnails of parked (off-screen) windows can't be captured, so warm the cache with each window

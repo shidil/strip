@@ -125,7 +125,8 @@ e2e-vm: bundle
 e2e-vm-check: bundle
 	@bash scripts/e2e/vm/run.sh --check
 
-## Recapture the website/README screenshots from a release build in the strip-e2e VM, then publish
+## Recapture the website/README screenshots from a release build in the strip-shots VM (fixed
+## 3440×1440 ultrawide; `tart run strip-shots`), then publish
 ## them to site/assets/img/screenshots/. SHOTS="search help" for a subset. See scripts/screenshots/.
 screenshots:
 	@bash scripts/screenshots/capture.sh $(SHOTS)

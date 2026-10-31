@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Captures the screenshots used by the website and README, from a RELEASE build of Strip running in
-# the strip-e2e Tart VM (never on the host, where Strip is your live window manager).
+# the strip-shots Tart VM (never on the host, where Strip is your live window manager).
 #
 #   scripts/screenshots/capture.sh                  # build release, capture every shot, publish
 #   scripts/screenshots/capture.sh search help      # only some shots
@@ -12,11 +12,16 @@
 # re-sign with the guest's stable identity (keeps its privacy grants valid) → run scene.sh inside a
 # guest Terminal session → pull PNGs to .build/screenshots/raw/ → publish.sh writes the web JPEGs.
 #
-# Needs: the VM running (`tart run strip-e2e`) and its one-time grants (scripts/e2e/vm/setup.sh),
+# Needs: the VM running (`tart run strip-shots`) and the grants it inherits from strip-e2e (vm/setup.sh),
 # including Screen Recording for the guest's Terminal (step 7).
 set -uo pipefail
 
-VM_NAME="${STRIP_E2E_VM:-strip-e2e}"
+# A clone of strip-e2e (same grants and signing identity) with a FIXED 3440×1440pt display, Strip's
+# target ultrawide. The e2e VM refits its display to its window, so shots taken there change with
+# the window's size. One-time setup:
+#   tart clone strip-e2e strip-shots   # strip-e2e stopped, for a clean copy
+#   tart set strip-shots --display 3440x1440pt --no-display-refit --random-mac
+VM_NAME="${STRIP_SHOTS_VM:-strip-shots}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GUEST_DIR="/tmp/strip-shots"
 GUEST_LOG="$GUEST_DIR/scene-output.log"
