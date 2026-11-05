@@ -331,6 +331,43 @@ scenario_focus_handoff_cancel() {
   return "$ok"
 }
 
+# Seats & Pile slice 0: focus arriving in a PARKED window. User-caused (⌘Tab here; a Dock or
+# notification click in real use) → the window is swapped into the anchor slot (a two-entry ring
+# swap, both snapped). Not user-caused (an AppleScript `activate`, an app activating itself) → nothing
+# moves. Before the fix, ⌘Tab to a parked window left it off-screen while its app took the keyboard.
+scenario_summon_parked() {
+  local ok=0 cp block p_app a_app b_app line
+  cp=$(checkpoint); send_hotkey cols2; block=$(wait_for_cols 2 "$cp" 3) || { _fail_dump ""; return 1; }
+  p_app=$(grep "slot=PARKED" <<<"$block" | head -1 | sed -E 's/^[^ ]+ +[●·] +//; s/ +slot=.*//')
+  a_app=$(_slot_app_full "$block" L); b_app=$(_slot_app_full "$block" R)
+  [ -n "$p_app" ] || { echo "    ✗ 2-up: no parked window" >&2; _fail_dump "$block"; return 1; }
+
+  # Not user-caused: no click or ⌘ key in the last second.
+  sleep 1.2
+  cp=$(checkpoint); osascript -e "tell application \"$p_app\" to activate" >/dev/null 2>&1
+  wait_for_line "parked-focus: $p_app focused without user input — left parked" "$cp" 3 >/dev/null \
+    || { echo "    ✗ app-caused focus into parked $p_app: no 'left parked' line" >&2; ok=1; }
+  if log_has_since "$cp" "summon: $p_app" 1; then echo "    ✗ app-caused focus summoned $p_app" >&2; ok=1; fi
+
+  # User-caused: MRU [A, P], then ⌘Tab → P.
+  osascript -e "tell application \"$a_app\" to activate" >/dev/null 2>&1; sleep 0.6
+  cp=$(checkpoint); send_key tab "command down"
+  line=$(wait_for_line "summon: $p_app → center" "$cp" 3) \
+    || { echo "    ✗ ⌘Tab to parked $p_app: not summoned" >&2; return 1; }
+  assert_eq "$line" "${line%%summon*}summon: $p_app → center (swapped with $a_app)" "summon swaps with the anchor" || ok=1
+  block=$(wait_for_new_apply "$cp" 3) || return 1
+  assert_eq "$(parse_slot_app "$block" L)" "${p_app%% *}" "summoned window in the anchor slot (L)" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" R)" "${b_app%% *}" "R unchanged" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" PARKED)" "${a_app%% *}" "old anchor parked" || { ok=1; _fail_dump "$block"; }
+  local expected
+  expected=$(parse_frame_for_literal_app "$block" "$p_app") && _assert_real_frame "$p_app" "$expected" "$cp" 3 || ok=1
+  sleep 0.6
+  assert_eq "$(_frontmost_app)" "$p_app" "summoned app stays frontmost" || ok=1
+
+  cp=$(checkpoint); send_hotkey cols3; wait_for_cols 3 "$cp" 3 >/dev/null || ok=1
+  return "$ok"
+}
+
 scenario_focus_move() {
   local ok=0 cp block center_app before_focus
   cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_new_apply "$cp" 3) || return 1

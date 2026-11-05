@@ -306,8 +306,10 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, O
       **`docs/design/seats-and-pile.md`** (accepted 2026-11-06). Owner decisions: click-to-center ON by
       default; a displaced center returns where its replacement came from (pile → pile, seat → trade);
       satellite draws are instant cuts; read-only private CGS Space id OK (ADR-0005).
-      - Slice 0 — fixes on today's ring (off-screen→off-screen moves snap; focus follows click with 0
-        motion; user-caused activation of a parked window swaps it into C).
+      - [x] Slice 0 — fixes on today's ring ✅ 2026-11-06 (`seats-and-pile-slice0`): sweeping moves
+        snap (`MotionPolicy`); focus follows external activation with 0 motion (`focusFollow`); a
+        click or ⌘ key cancels a pending focus hand-off; a user-caused activation of a parked window
+        swaps it into C (`summon`, attribution = click/⌘ key within 1 s). e2e: 28/28.
       - Slice 1 — promote + draw on the ring (⌃⌥U/I/O/↩, committed-click `PromotePolicy`, `mru`).
       - Slice 2 — new pure `StripCore` target: `Table`, reducer `reduce(state, event, now)`, typed
         events, ordered `MovePlan`/`transitions()`, replay harness (ADR-0006: evolve in place, no new project).

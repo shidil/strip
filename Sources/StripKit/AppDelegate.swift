@@ -57,8 +57,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controller.handleUserDrag(id: id, wasResize: wasResize)
         }
         // Seats & Pile slice 0: the user's own click or ⌘ keystroke beats a still-pending focus hand-off.
-        observer.onUserMouseDown = { [weak self] in self?.controller.cancelPendingFocus("mouseDown") }
-        hotkeys.onUserCommandKey = { [weak self] in self?.controller.cancelPendingFocus("⌘ key") }
+        observer.onUserMouseDown = { [weak self] in
+            self?.controller.noteUserInput()
+            self?.controller.cancelPendingFocus("mouseDown")
+        }
+        hotkeys.onUserCommandKey = { [weak self] in
+            self?.controller.noteUserInput()
+            self?.controller.cancelPendingFocus("⌘ key")
+        }
         controller.systemFocus = { [weak self] in self?.observer.frontmostFocus() }
         observer.start()
         rebuildMenu()

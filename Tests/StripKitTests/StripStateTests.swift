@@ -332,4 +332,38 @@ final class StripStateTests: XCTestCase {
                            pins: [.L: 1], focusSlot: .C)
         XCTAssertEqual(s.focusFollow(1), .L)
     }
+
+    // MARK: - summon (Seats & Pile slice 0)
+
+    func testSummonSwapsAParkedWindowIntoTheCenterAndMovesNothingElse() {
+        // 3-up, ring 1…6 centered on 3: L=2 C=3 R=4; 1, 5, 6 parked.
+        var s = StripState(ring: [1, 2, 3, 4, 5, 6], centerId: 3, cols: 3, focusSlot: .R)
+        XCTAssertEqual(s.summon(6), 3, "returns the displaced center")
+        let a = StripLayout(s).assignment()
+        XCTAssertEqual(a[.C], 6)
+        XCTAssertEqual(a[.L], 2, "L unchanged")
+        XCTAssertEqual(a[.R], 4, "R unchanged")
+        XCTAssertEqual(s.focusSlot, .C)
+        XCTAssertFalse(a.values.contains(3), "old center is parked")
+        XCTAssertEqual(Set(s.ring), [1, 2, 3, 4, 5, 6], "membership unchanged")
+    }
+
+    func testSummonInTwoUpLandsInTheLeftAnchor() {
+        var s = StripState(ring: [1, 2, 3], centerId: 1, cols: 2, focusSlot: .R)
+        // 2-up: L=1 (anchor) R=2; 3 parked.
+        XCTAssertEqual(s.summon(3), 1)
+        let a = StripLayout(s).assignment()
+        XCTAssertEqual(a[.L], 3)
+        XCTAssertEqual(a[.R], 2)
+        XCTAssertEqual(s.focusSlot, .L)
+    }
+
+    func testSummonIsANoOpForVisiblePinnedOrUnknownWindows() {
+        var s = StripState(ring: [1, 2, 3, 4, 5], centerId: 3, cols: 3, pins: [.L: 2])
+        let before = s.ring
+        XCTAssertNil(s.summon(4), "already visible")
+        XCTAssertNil(s.summon(2), "pinned")
+        XCTAssertNil(s.summon(99), "not in the ring")
+        XCTAssertEqual(s.ring, before)
+    }
 }

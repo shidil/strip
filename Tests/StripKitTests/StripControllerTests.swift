@@ -106,4 +106,16 @@ final class StripControllerTests: XCTestCase {
                        height: vis.height * StripController.minTileHeightFraction)
         XCTAssertTrue(StripController.isTileableSize(s, onDisplay: vis))
     }
+
+    // MARK: - Activation attribution (Seats & Pile slice 0)
+
+    func testFocusChangeRightAfterUserInputIsUserCaused() {
+        XCTAssertTrue(StripController.isUserCaused(now: 10.4, lastUserInput: 10.0))
+        XCTAssertTrue(StripController.isUserCaused(now: 11.0, lastUserInput: 10.0), "edge of the window")
+    }
+
+    func testFocusChangeWithoutRecentInputIsNotUserCaused() {
+        XCTAssertFalse(StripController.isUserCaused(now: 11.5, lastUserInput: 10.0))
+        XCTAssertFalse(StripController.isUserCaused(now: 5.0, lastUserInput: -.infinity), "never any input")
+    }
 }

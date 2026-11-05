@@ -33,6 +33,7 @@ SCENARIOS=(
   scenario_no_park_sweep
   scenario_focus_follow
   scenario_focus_handoff_cancel
+  scenario_summon_parked
   scenario_focus_move
   scenario_move_focused_swap
   scenario_pin_unpin

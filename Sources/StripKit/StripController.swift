@@ -706,10 +706,43 @@ public final class StripController {
     private func followExternalFocus(_ id: CGWindowID) {
         guard !focusHandOffPending else { return }
         guard StripLayout(state).activeId != id else { return } // already the focused slot
-        guard let slot = state.focusFollow(id) else { return }  // parked → not handled here
+        guard let slot = state.focusFollow(id) else { summonParked(id); return }
         lastFocusedId = id // the OS already focused it — apply() must not re-activate the old slot
         Log.line("focus-follow: \(windowsById[id]?.appName ?? "?") → slot \(slot.rawValue)")
         apply()
+    }
+
+    /// Focus landed on a **parked** managed window. If the user caused it (a click or ⌘ key just
+    /// before — ⌘Tab, a Dock or notification click), draw the window into the center: a two-entry
+    /// ring swap with the current center, both snapped (a cut — nothing slides across the screen).
+    /// Otherwise (an app activating itself, `open -a`, AppleScript) nothing moves. Seats & Pile slice 0.
+    private func summonParked(_ id: CGWindowID) {
+        let app = windowsById[id]?.appName ?? "?"
+        guard Self.isUserCaused(now: CACurrentMediaTime(), lastUserInput: lastUserInputAt) else {
+            Log.line("parked-focus: \(app) focused without user input — left parked")
+            return
+        }
+        guard let old = state.summon(id) else { return }
+        lastFocusedId = id // the OS already focused it — apply() must not re-activate anything
+        Log.line("summon: \(app) → center (swapped with \(windowsById[old]?.appName ?? "?"))")
+        animator.snapNext([id, old])
+        apply()
+    }
+
+    /// When the user last clicked (outside Strip) or pressed a ⌘ key — media time; −∞ if never.
+    private var lastUserInputAt: CFTimeInterval = -.infinity
+
+    /// Record user input for activation attribution (wired to the mouse monitor and the hotkey tap).
+    public func noteUserInput() { lastUserInputAt = CACurrentMediaTime() }
+
+    /// How recent the user's own input must be for a focus change to count as theirs.
+    static let userCauseWindow: CFTimeInterval = 1.0
+
+    /// Whether a focus change at `now` was caused by the user: a click or ⌘ key within
+    /// `userCauseWindow` before it (⌘Tab's release → activation → 75 ms observer debounce all fit).
+    /// Pure → unit-testable.
+    static func isUserCaused(now: CFTimeInterval, lastUserInput: CFTimeInterval) -> Bool {
+        now - lastUserInput <= userCauseWindow
     }
 
     // MARK: - Respect user drags (M7 Slice 4)

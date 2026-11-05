@@ -38,6 +38,10 @@ releases begin. Until then, `Resources/Info.plist` identifies experimental snaps
   longer gets overridden: Strip used to activate the newly centered window ~170 ms later and steal
   the focus back. The pending hand-off is now cancelled and Strip follows where focus really went
   (e2e `scenario_focus_handoff_cancel`).
+- ⌘Tab (or a Dock or notification click) to a window that Strip had parked off-screen now brings
+  it to the center, swapping it with the window that was there. Nothing else moves. Before, the
+  app took the keyboard while its window stayed off-screen. An app that activates itself without
+  your input leaves its parked window where it is (e2e `scenario_summon_parked`).
 - e2e fixture: windows are moved before being resized, so an app that reopens against the right
   screen edge (Console, left there by a previous run) still grows past the tileable size.
 
