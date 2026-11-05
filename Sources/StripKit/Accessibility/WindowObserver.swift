@@ -41,6 +41,9 @@ public final class WindowObserver {
     /// `wasResize` is true if any `kAXResized` was seen during the gesture (resize takes precedence
     /// over the incidental origin change a top/left-edge resize also produces).
     public var onUserDrag: ((_ id: CGWindowID, _ wasResize: Bool) -> Void)?
+    /// Fired on every global left mouseDown (a click in another app's window — not Strip's own
+    /// panels, which are local events). The controller cancels a pending focus hand-off on it.
+    public var onUserMouseDown: (() -> Void)?
 
     private let workspace = NSWorkspace.shared
     private var observers: [pid_t: AXObserver] = [:]
@@ -150,7 +153,12 @@ public final class WindowObserver {
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) {
             [weak self] event in
             guard let self else { return }
-            if event.type == .leftMouseDown { self.leftMouseDown = true } else { self.handleMouseUp() }
+            if event.type == .leftMouseDown {
+                self.leftMouseDown = true
+                self.onUserMouseDown?()
+            } else {
+                self.handleMouseUp()
+            }
         }
         // Activation is a *pure focus* event (no membership change) → lightweight path. Hide/unhide
         // change which windows are tileable → full reconcile.
@@ -495,6 +503,14 @@ public final class WindowObserver {
         let app = AXUIElementGetPid(element, &pid) == .success
             ? NSRunningApplication(processIdentifier: pid)?.localizedName ?? "pid \(pid)" : "?"
         return "\(name)(\(app))"
+    }
+
+    /// The frontmost app's pid and its focused window id (nil if unreadable) — one cheap
+    /// `kAXFocusedWindow` read on a known app element, not an enumeration. Main thread.
+    public func frontmostFocus() -> (pid: pid_t, id: CGWindowID?)? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let pid = app.processIdentifier
+        return (pid, focusedWindowID(of: pid))
     }
 
     /// The `CGWindowID` of `pid`'s currently-focused window, or `nil` if unreadable. Also watches it:

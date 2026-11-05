@@ -34,6 +34,10 @@ releases begin. Until then, `Resources/Info.plist` identifies experimental snaps
 - Focus that arrives from outside Strip (a click, ⌘Tab, the Dock) into a visible side window is
   now followed: Strip's focused slot moves to it with no window motion, so ⌃⌥J/K continue from the
   window you're actually in instead of the stale one (e2e `scenario_focus_follow`).
+- Clicking another window or pressing a ⌘ shortcut (⌘Tab, ⌘`) right after a slide or ⌃⌥J/K no
+  longer gets overridden: Strip used to activate the newly centered window ~170 ms later and steal
+  the focus back. The pending hand-off is now cancelled and Strip follows where focus really went
+  (e2e `scenario_focus_handoff_cancel`).
 - e2e fixture: windows are moved before being resized, so an app that reopens against the right
   screen edge (Console, left there by a previous run) still grows past the tileable size.
 

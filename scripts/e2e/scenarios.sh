@@ -266,9 +266,21 @@ scenario_focus_follow() {
 
   cp=$(checkpoint)
   osascript -e "tell application \"$r_app\" to activate" >/dev/null 2>&1
-  wait_for_line "focus-follow: $r_app → slot R" "$cp" 3 >/dev/null \
-    || { echo "    ✗ no focus-follow to R ($r_app)" >&2; ok=1; }
-  after=$(wait_for_new_apply "$cp" 3) || { ok=1; after=""; }
+  local ffn=""
+  if wait_for_line "focus-follow: $r_app → slot R" "$cp" 3 >/dev/null; then
+    ffn=$(grep -n -F "focus-follow: $r_app → slot R" "$STRIP_E2E_LOG" | tail -1 | cut -d: -f1)
+  else
+    echo "    ✗ no focus-follow to R ($r_app)" >&2; ok=1
+  fi
+  after=""
+  if [ -n "$ffn" ]; then
+    # Compare the focus-follow's own apply with the apply right before it — not the setup block: a
+    # constraint-learning re-apply (another window's learned floor) can land in between.
+    local start
+    start=$(head -n "$ffn" "$STRIP_E2E_LOG" | grep -n "apply:" | tail -1 | cut -d: -f1)
+    block=$(sed -n "${start},$((ffn - 1))p" "$STRIP_E2E_LOG")
+    after=$(wait_for_new_apply "$ffn" 3) || { ok=1; after=""; }
+  fi
   if [ -n "$after" ]; then
     assert_eq "$(parse_focus_app "$after")" "${r_app%% *}" "external activation -> focus on R" || { ok=1; _fail_dump "$after"; }
     for app in "${FIXTURE_APPS[@]}"; do
@@ -281,6 +293,41 @@ scenario_focus_follow() {
 
   cp=$(checkpoint); send_hotkey focusPrev; block=$(wait_for_new_apply "$cp" 3) || return 1
   assert_eq "$(parse_focus_app "$block")" "${c_app%% *}" "J after focus-follow steps R -> C" || { ok=1; _fail_dump "$block"; }
+  return "$ok"
+}
+
+# Seats & Pile slice 0: a slide schedules a focus hand-off to the new center ~170 ms later
+# (focusSettleDelay). A ⌘ keystroke (here ⌘Tab) or a click inside that gap must cancel it, or Strip
+# activates the slid-to window AFTER the user switched away and steals their focus. A timing race by
+# nature: each attempt sends ⌃⌥L then ⌘Tab D ms apart in one script and retries until Strip logs the
+# cancel (proof the ⌘Tab landed inside the gap). MRU is set to [C app, L app] first, so ⌘Tab's
+# target is the L app; the slid-to window is the R app. Clicks can't be driven here — hand-test those.
+scenario_focus_handoff_cancel() {
+  local ok=0 cp block l_app c_app r_app d hit=""
+  cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_cols 3 "$cp" 3) || { _fail_dump ""; return 1; }
+  l_app=$(_slot_app_full "$block" L); c_app=$(_slot_app_full "$block" C); r_app=$(_slot_app_full "$block" R)
+  for d in 0.05 0.03 0.08 0.1 0.04; do
+    osascript -e "tell application \"$l_app\" to activate" >/dev/null 2>&1; sleep 0.4
+    osascript -e "tell application \"$c_app\" to activate" >/dev/null 2>&1; sleep 0.6
+    cp=$(checkpoint)
+    osascript -e "tell application \"System Events\"
+        key code 37 using {control down, option down}
+        delay $d
+        key code 48 using {command down}
+      end tell" >/dev/null 2>&1
+    if wait_for_line "focus hand-off cancelled ← ⌘ key" "$cp" 1 >/dev/null 2>&1; then hit=1; break; fi
+    # Missed the gap (Strip already handed focus off): undo the slide and try a different spacing.
+    send_hotkey slidePrev; sleep 0.8
+  done
+  if [ -z "$hit" ]; then
+    echo "    ✗ the focus hand-off was never cancelled by ⌘Tab (5 attempts)" >&2
+    echo "    frontmost now: $(_frontmost_app) (slid-to window: $r_app)" >&2
+    return 1
+  fi
+  sleep 1 # well past focusSettleDelay: a stale hand-off would have activated $r_app by now
+  assert_eq "$(_frontmost_app)" "$l_app" "⌘Tab target stays frontmost (not the slid-to $r_app)" || ok=1
+  wait_for_line "focus-follow: $l_app → slot" "$cp" 2 >/dev/null \
+    || { echo "    ✗ Strip didn't follow focus to the ⌘Tab target ($l_app)" >&2; ok=1; }
   return "$ok"
 }
 
