@@ -89,6 +89,19 @@ _assert_real_frame() {
     echo "    ✗ $app: Strip logged a frame-clamped correction ($clamp_actual) that doesn't match the live real frame ($live)" >&2
     return 1
   fi
+  # Cascade from ANOTHER window: its learned floor re-flowed the row, so a later apply re-targeted
+  # this one (seen in the VM: Preview re-laid from (688 2064) to (756 2013) after a neighbor's
+  # constraint-learned). The contract is convergence on the LATEST commanded frame.
+  local latest expected3
+  if latest=$(_latest_apply_block_since "$since") \
+     && expected3=$(parse_frame_for_literal_app "$latest" "$app") \
+     && [ "$expected3" != "$expected" ]; then
+    for ((i = 0; i < 30; i++)); do
+      live=$(real_window_frame "$app")
+      [ -n "$live" ] && _frames_match "$live" "$expected3" && return 0
+      sleep 0.1
+    done
+  fi
   echo "    ✗ $app: real window frame ($live) never matched Strip's logged frame ($expected), and Strip never detected the mismatch (no frame-clamped line) within ${timeout}s" >&2
   return 1
 }
@@ -166,6 +179,63 @@ scenario_slide() {
   assert_eq "$(parse_slot_app "$block" L)" "$before_l" "slidePrev round-trip -> L" || { ok=1; _fail_dump "$block"; }
   assert_eq "$(parse_slot_app "$block" C)" "$before_c" "slidePrev round-trip -> C" || { ok=1; _fail_dump "$block"; }
   assert_eq "$(parse_slot_app "$block" R)" "$before_r" "slidePrev round-trip -> R" || { ok=1; _fail_dump "$block"; }
+  return "$ok"
+}
+
+# _parked_left_app <block> — prints the full appName of the window parked off the LEFT edge (verbose
+# placement lines: "<ts> <●|·> <name…> slot=PARKED frame=(x,y wxh)", x negative), or nothing.
+_parked_left_app() {
+  grep "slot=PARKED" <<<"$1" | grep -E 'frame=\(-[0-9]+,' | head -1 \
+    | sed -E 's/^[^ ]+ +[●·] +//; s/ +slot=.*//'
+}
+
+# _sample_mid_x <appName> <seconds> — polls the REAL window frame and prints each sample's midX,
+# one per line (ground truth, independent of Strip's log). osascript is slow (~50–150ms/sample), but a
+# spring across the display lasts several hundred ms, so a sweep is reliably sampled mid-flight.
+_sample_mid_x() {
+  local app="$1" n=$(( $2 * 10 )) x y w h
+  for ((i = 0; i < n; i++)); do
+    read -r x y w h <<<"$(real_window_frame "$app")"
+    [ -n "$w" ] && echo $(( x + w / 2 ))
+  done
+}
+
+# Seats & Pile slice 0: a slide must never drag a window across the display. The wrapping ring flips
+# a parked window's edge (monocle: parked-left → parked-right) or un-parks it on the far side of its
+# new seat (2-up: parked-left → R); MotionPolicy.sweepsAcross makes those moves snap. The fixture's 3
+# windows reproduce both. Asserts on the "sweep-snap:" log line AND on the real frame never being
+# sampled crossing the display.
+scenario_no_park_sweep() {
+  local ok=0 cp block app screen_w mid
+  read -r screen_w _ <<<"$(_screen_size)"
+
+  # Monocle: the left-parked window ends parked right — must never be seen on screen.
+  cp=$(checkpoint); send_hotkey cols1; block=$(wait_for_cols 1 "$cp" 3) || { _fail_dump ""; return 1; }
+  app=$(_parked_left_app "$block")
+  if [ -z "$app" ]; then echo "    ✗ monocle: no window parked left" >&2; _fail_dump "$block"; return 1; fi
+  cp=$(checkpoint); send_hotkey slideNext
+  for mid in $(_sample_mid_x "$app" 1); do
+    if [ "$mid" -gt 0 ] && [ "$mid" -lt "$screen_w" ]; then
+      echo "    ✗ monocle: $app seen on screen (midX=$mid) while moving between park edges" >&2; ok=1; break
+    fi
+  done
+  wait_for_line "sweep-snap: $app " "$cp" 3 >/dev/null || { echo "    ✗ monocle: no sweep-snap for $app" >&2; ok=1; }
+
+  # 2-up: the left-parked window lands in R — must never be seen crossing the L seat.
+  cp=$(checkpoint); send_hotkey cols2; block=$(wait_for_cols 2 "$cp" 3) || { _fail_dump ""; return 1; }
+  app=$(_parked_left_app "$block")
+  if [ -z "$app" ]; then echo "    ✗ 2-up: no window parked left" >&2; _fail_dump "$block"; return 1; fi
+  cp=$(checkpoint); send_hotkey slideNext
+  for mid in $(_sample_mid_x "$app" 1); do
+    if [ "$mid" -gt 0 ] && [ "$mid" -lt $(( screen_w * 4 / 10 )) ]; then
+      echo "    ✗ 2-up: $app seen crossing the left seat (midX=$mid) on its way to R" >&2; ok=1; break
+    fi
+  done
+  block=$(wait_for_new_apply "$cp" 3) || { ok=1; }
+  assert_eq "$(parse_slot_app "$block" R)" "${app%% *}" "2-up slideNext -> left-parked window lands in R" || { ok=1; _fail_dump "$block"; }
+  wait_for_line "sweep-snap: $app " "$cp" 3 >/dev/null || { echo "    ✗ 2-up: no sweep-snap for $app" >&2; ok=1; }
+
+  cp=$(checkpoint); send_hotkey cols3; wait_for_cols 3 "$cp" 3 >/dev/null || ok=1
   return "$ok"
 }
 

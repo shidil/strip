@@ -541,7 +541,10 @@ public final class StripController {
         }
         animator.focusedID = layout.activeId // ring tracks the focused window
         if animated {
-            animator.animate(targets, on: screen)
+            let swept = animator.animate(targets, on: screen)
+            for id in swept.sorted() {
+                Log.line("sweep-snap: \(windowsById[id]?.appName ?? "?") — snapped instead of springing across the display")
+            }
         } else {
             animator.snap(targets)
         }

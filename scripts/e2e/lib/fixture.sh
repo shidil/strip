@@ -80,6 +80,11 @@ _resize_window() {
   w=$(( w * 6 / 10 ))
   h=$(( h * 6 / 10 ))
   osascript -e "tell application \"$process\" to activate" >/dev/null 2>&1
+  # Move first: apps restore their last frame, and a window reopened against the right edge (where a
+  # previous run's R slot left it — seen with Console at x=2840, 600 wide on a 3440 display) silently
+  # refuses to grow past the screen edge, staying below the 20% tileable width so Strip floats it.
+  osascript -e "tell application \"System Events\" to tell process \"$process\" to set position of window 1 to {40, 60}" \
+    >/dev/null 2>&1 || true
   osascript -e "tell application \"System Events\" to tell process \"$process\" to set size of window 1 to {$w, $h}" \
     >/dev/null 2>&1 || true
 }

@@ -94,11 +94,18 @@ public final class WindowAnimator: NSObject {
     /// (its live frame, which the controller already read during `refresh()`) so it glides from where
     /// it is — no synchronous AX read on the main thread here (perf: animate seeding). Windows omitted
     /// here stop being animated.
-    public func animate(_ targets: [(ax: AXWindow, frame: CGRect, current: CGRect)], on screen: NSScreen) {
+    ///
+    /// Returns the windows snapped (rather than sprung) because springing would sweep them across
+    /// the display (`MotionPolicy.sweepsAcross`) — so the caller can log them.
+    @discardableResult
+    public func animate(_ targets: [(ax: AXWindow, frame: CGRect, current: CGRect)], on screen: NSScreen) -> Set<CGWindowID> {
         let sp = Signpost.log
         let animateState = sp.beginInterval("animate")
         defer { sp.endInterval("animate", animateState, "targets=\(targets.count)") }
 
+        let vis = screen.quartzVisibleFrame
+        let displays = NSScreen.screens.map(\.quartzFrame)
+        var sweepSnapped: Set<CGWindowID> = []
         let keepIds = Set(targets.map { $0.ax.windowID })
 
         // Drop windows no longer present.
@@ -109,7 +116,12 @@ public final class WindowAnimator: NSObject {
 
         for t in targets {
             guard let id = t.ax.windowIDOrNil else { continue }
-            let snap = pendingSnapIDs.contains(id)
+            // Where the window is drawn right now: its live spring (mid-flight included), else the
+            // live frame the controller read. A move that would sweep across the display snaps.
+            let from = entries[id]?.spring.current ?? t.current
+            let sweeps = MotionPolicy.sweepsAcross(from: from, to: t.frame, in: vis, displays: displays)
+            if sweeps { sweepSnapped.insert(id) }
+            let snap = sweeps || pendingSnapIDs.contains(id)
             if var existing = entries[id] {
                 existing.target = t.frame
                 existing.ax = t.ax // use the freshest AX handle after a re-scan
@@ -136,6 +148,7 @@ public final class WindowAnimator: NSObject {
         pendingSnapIDs = []
         ensureRunning(on: screen)
         emitFocusFrame() // place the ring at the window's current position right away
+        return sweepSnapped
     }
 
     /// Make the next `animate(_:on:)` drive its windows with a crisp snap-back spring instead of the
