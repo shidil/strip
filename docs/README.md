@@ -13,6 +13,7 @@
 
 - [Architecture](../ARCHITECTURE.md)
 - [Architecture Decision Records](adr/README.md)
+- [Design: Seats & Pile](design/seats-and-pile.md): the M8 interaction model
 - [Performance measurement](../MEASURING.md)
 
 ## Planning and History

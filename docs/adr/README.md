@@ -10,6 +10,8 @@ This directory contains Architecture Decision Records (ADRs) for Strip.
 | [0002](0002-use-private-window-identity-bridge.md) | Use Private Window Identity Bridge | accepted | 2026-07-13 |
 | [0003](0003-keep-ax-enumeration-on-main-thread.md) | Keep AX Enumeration on Main Thread | accepted | 2026-07-13 |
 | [0004](0004-use-stable-public-bundle-identity.md) | Use Stable Public Bundle Identity | accepted | 2026-07-13 |
+| [0005](0005-use-private-space-identity.md) | Use Private Space Identity | accepted | 2026-11-06 |
+| [0006](0006-evolve-in-place-with-pure-event-driven-core.md) | Evolve in Place with a Pure Event-Driven Core | accepted | 2026-11-06 |
 
 ## About ADRs
 
