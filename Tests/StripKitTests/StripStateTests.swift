@@ -308,4 +308,28 @@ final class StripStateTests: XCTestCase {
         s.togglePin()
         XCTAssertTrue(s.pins.isEmpty, "nothing to pin when the focused slot is empty")
     }
+
+    // MARK: - focusFollow (Seats & Pile slice 0)
+
+    func testFocusFollowMovesFocusToTheClickedSlotWithoutMovingTheFilm() {
+        var s = StripState(ring: [1, 2, 3, 4, 5], centerId: 3, cols: 3, focusSlot: .C)
+        let before = StripLayout(s).assignment()
+        XCTAssertEqual(s.focusFollow(4), .R)
+        XCTAssertEqual(s.focusSlot, .R)
+        XCTAssertEqual(s.centerId, 3, "center unchanged")
+        XCTAssertEqual(StripLayout(s).assignment(), before, "no window changes slot")
+        XCTAssertEqual(s.focusSlotAfterMove(-1), .C, "J now steps from R, not from the stale C")
+    }
+
+    func testFocusFollowIgnoresParkedWindows() {
+        var s = StripState(ring: [1, 2, 3, 4, 5], centerId: 3, cols: 3, focusSlot: .C)
+        XCTAssertNil(s.focusFollow(5), "5 is parked")
+        XCTAssertEqual(s.focusSlot, .C)
+    }
+
+    func testFocusFollowReachesAPinnedSlot() {
+        var s = StripState(ring: [1, 2, 3, 4, 5], centerId: 3, cols: 3,
+                           pins: [.L: 1], focusSlot: .C)
+        XCTAssertEqual(s.focusFollow(1), .L)
+    }
 }

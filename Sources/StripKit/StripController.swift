@@ -653,10 +653,29 @@ public final class StripController {
         guard !isSuspended else { return }
         if let id, windowsById[id] != nil {
             Signpost.log.emitEvent("reconcile.skip") // membership unchanged → no enumeration
+            followExternalFocus(id)
             return
         }
         Log.line("observer: focus reconcile fell back to full (focused window \(id.map { "\($0) unmanaged" } ?? "unreadable"), pid \(pid))")
         refreshAndApply() // unknown focused window → full fallback
+    }
+
+    /// Focus landed on managed window `id` from outside Strip (click, ⌘Tab, Dock). Track it — the
+    /// focused slot moves to the window's slot with no window motion (Seats & Pile slice 0) — so J/K
+    /// start from where the user really is, and `apply()` doesn't hand focus back to the old slot.
+    ///
+    /// Skipped while Strip's own focus hand-off is still pending (a J/K or slide just changed the
+    /// focused slot and `scheduleFocus` hasn't delivered yet): the system's focused window is then
+    /// the stale one, and following it would undo the user's keypress. Parked windows are left alone
+    /// (summoning them into a slot is a separate slice-0 fix).
+    private func followExternalFocus(_ id: CGWindowID) {
+        let pendingOwnFocus = StripLayout(state).activeId.map { $0 != lastFocusedId } ?? false
+        guard !pendingOwnFocus else { return }
+        guard StripLayout(state).activeId != id else { return } // already the focused slot
+        guard let slot = state.focusFollow(id) else { return }  // parked → not handled here
+        lastFocusedId = id // the OS already focused it — apply() must not re-activate the old slot
+        Log.line("focus-follow: \(windowsById[id]?.appName ?? "?") → slot \(slot.rawValue)")
+        apply()
     }
 
     // MARK: - Respect user drags (M7 Slice 4)

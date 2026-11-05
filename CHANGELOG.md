@@ -31,6 +31,9 @@ releases begin. Until then, `Resources/Info.plist` identifies experimental snaps
   from one screen edge to the other (monocle, or 3-up with 4+ windows) or bring it in from the far
   side of its new slot (2-up), springing it through every slot in between; those moves now snap
   (`MotionPolicy.sweepsAcross`, e2e `scenario_no_park_sweep`).
+- Focus that arrives from outside Strip (a click, ⌘Tab, the Dock) into a visible side window is
+  now followed: Strip's focused slot moves to it with no window motion, so ⌃⌥J/K continue from the
+  window you're actually in instead of the stale one (e2e `scenario_focus_follow`).
 - e2e fixture: windows are moved before being resized, so an app that reopens against the right
   screen edge (Console, left there by a previous run) still grows past the tileable size.
 

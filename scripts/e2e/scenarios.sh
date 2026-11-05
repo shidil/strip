@@ -239,6 +239,51 @@ scenario_no_park_sweep() {
   return "$ok"
 }
 
+# _slot_app_full <block> <L|C|R> — prints the FULL appName in that slot (verbose placement lines),
+# unlike parse_slot_app's first word — needed to address the app ("Activity Monitor") by name.
+_slot_app_full() {
+  grep -E "slot=$2([[:space:]]|$)" <<<"$1" | head -1 | sed -E 's/^[^ ]+ +[●·] +//; s/ +slot=.*//'
+}
+
+_frontmost_app() {
+  osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null
+}
+
+# Seats & Pile slice 0: focus that arrives from outside Strip (here an AppleScript `activate`, the
+# same activation ⌘Tab/Dock/a click produce) into a visible side window is FOLLOWED — the focused
+# slot moves to it with no window motion, Strip doesn't yank focus back, and J/K continue from it.
+# Before the fix, handleExternalActivation returned early for managed windows: focus stayed on C in
+# Strip's model, so J went C→L instead of R→C.
+scenario_focus_follow() {
+  local ok=0 cp block r_app c_app app before after after_f
+  cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_cols 3 "$cp" 3) || { _fail_dump ""; return 1; }
+  # Put Strip's focus on C: J twice clamps at L, then K once.
+  send_hotkey focusPrev; sleep 0.2; send_hotkey focusPrev; sleep 0.2
+  cp=$(checkpoint); send_hotkey focusNext; block=$(wait_for_new_apply "$cp" 3) || return 1
+  sleep 0.6 # let Strip's own focus hand-off to C land (focusSettleDelay) before activating from outside
+  r_app=$(_slot_app_full "$block" R); c_app=$(_slot_app_full "$block" C)
+  assert_eq "$(parse_focus_app "$block")" "${c_app%% *}" "setup: focus on C" || { _fail_dump "$block"; return 1; }
+
+  cp=$(checkpoint)
+  osascript -e "tell application \"$r_app\" to activate" >/dev/null 2>&1
+  wait_for_line "focus-follow: $r_app → slot R" "$cp" 3 >/dev/null \
+    || { echo "    ✗ no focus-follow to R ($r_app)" >&2; ok=1; }
+  after=$(wait_for_new_apply "$cp" 3) || { ok=1; after=""; }
+  if [ -n "$after" ]; then
+    assert_eq "$(parse_focus_app "$after")" "${r_app%% *}" "external activation -> focus on R" || { ok=1; _fail_dump "$after"; }
+    for app in "${FIXTURE_APPS[@]}"; do
+      before=$(parse_frame_for_literal_app "$block" "$app"); after_f=$(parse_frame_for_literal_app "$after" "$app")
+      _frames_match "$before" "$after_f" 1 || { echo "    ✗ $app moved on focus-follow: ($before) -> ($after_f)" >&2; ok=1; }
+    done
+  fi
+  sleep 0.8 # longer than focusSettleDelay: Strip must NOT hand focus back to C
+  assert_eq "$(_frontmost_app)" "$r_app" "Strip leaves the externally-focused app frontmost" || ok=1
+
+  cp=$(checkpoint); send_hotkey focusPrev; block=$(wait_for_new_apply "$cp" 3) || return 1
+  assert_eq "$(parse_focus_app "$block")" "${c_app%% *}" "J after focus-follow steps R -> C" || { ok=1; _fail_dump "$block"; }
+  return "$ok"
+}
+
 scenario_focus_move() {
   local ok=0 cp block center_app before_focus
   cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_new_apply "$cp" 3) || return 1
