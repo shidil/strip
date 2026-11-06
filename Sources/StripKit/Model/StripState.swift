@@ -11,6 +11,28 @@ public enum Emphasis: Hashable {
     case focus, equal
 }
 
+/// The seat keys U / I / O: they name the left / center / right seat in every picker and chord
+/// (Seats & Pile, *Picking a target seat*). `StripState.seat(for:)` maps a key to the slot it means
+/// for the current column count.
+public enum SeatKey: String, CaseIterable, Hashable {
+    case u, i, o
+}
+
+/// Two windows that traded seats: `a` moved from `from` to `to`, and `b` moved from `to` to `from`.
+public struct Trade: Equatable {
+    public let a: CGWindowID
+    public let b: CGWindowID
+    public let from: Slot
+    public let to: Slot
+}
+
+/// A draw: `drawn` came off the pile into `seat`, and `displaced` went to the top of the pile.
+public struct Draw: Equatable {
+    public let drawn: CGWindowID
+    public let displaced: CGWindowID
+    public let seat: Slot
+}
+
 /// The complete logical state of the strip — the direct analogue of the prototype's `state` object
 /// (`Strip Window Manager.dc.html`, lines 117-129). Windows are identified by `CGWindowID`.
 public struct StripState {
@@ -27,10 +49,16 @@ public struct StripState {
     public var focusSlot: Slot
     /// Tunable window-sizing knobs (padding, gaps, focus width ratio) — see `LayoutConfig`.
     public var config: LayoutConfig
+    /// Recency order, most recent first (Seats & Pile slice 1). A window moves to the front when
+    /// focus lands on it (`touch`), and a window a draw displaces goes to the front of the parked
+    /// ones, so the next draw brings it back. Windows not listed rank after listed ones; see `pile`.
+    public var mru: [CGWindowID]
+    /// The last two windows that traded seats, so promote on the center seat can undo it.
+    public var lastTrade: Trade?
 
     public init(ring: [CGWindowID] = [], centerId: CGWindowID? = nil, cols: Int = 3,
                 emphasis: Emphasis = .focus, pins: [Slot: CGWindowID] = [:], focusSlot: Slot = .C,
-                config: LayoutConfig = .default) {
+                config: LayoutConfig = .default, mru: [CGWindowID] = []) {
         self.ring = ring
         self.centerId = centerId
         self.cols = cols
@@ -38,6 +66,8 @@ public struct StripState {
         self.pins = pins
         self.focusSlot = focusSlot
         self.config = config
+        self.mru = mru
+        self.lastTrade = nil
     }
 
     /// The slot keys present for the current column count (`slotKeysFor`, prototype line 162).
@@ -62,6 +92,53 @@ public struct StripState {
         case 2: return [.L, .R]
         default: return [.C, .R, .L]
         }
+    }
+
+    /// The slot a seat key names for the current column count: L / C / R in 3-up; in 2-up L acts as
+    /// the center, so U and I both mean L; in monocle every key means C.
+    public func seat(for key: SeatKey) -> Slot {
+        switch (cols, key) {
+        case (1, _): return .C
+        case (2, .o): return .R
+        case (2, _): return .L
+        case (_, .u): return .L
+        case (_, .i): return .C
+        case (_, .o): return .R
+        }
+    }
+
+    /// The parked windows in draw order: `pile[0]` is the next draw. Listed in `mru` order; windows
+    /// `mru` doesn't know yet follow, nearest to the center first (right before left), which seeds
+    /// the order from today's ring.
+    public var pile: [CGWindowID] {
+        let r = StripLayout(self).resolve()
+        let shown = Set(r.assign.values)
+        let rank = Dictionary(mru.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        func distance(_ id: CGWindowID) -> (Int, Int) {
+            guard let up = r.unpinned.firstIndex(of: id) else { return (Int.max, 0) }
+            var d = posMod(up - r.centerPos, r.m)
+            if Double(d) > Double(r.m) / 2 { d -= r.m }
+            return (abs(d), d < 0 ? 1 : 0)
+        }
+        return ring.filter { !shown.contains($0) }.sorted { a, b in
+            let ra = rank[a] ?? Int.max, rb = rank[b] ?? Int.max
+            if ra != rb { return ra < rb }
+            return distance(a) < distance(b)
+        }
+    }
+
+    /// Focus landed on window `id`: move it to the front of the recency order.
+    public mutating func touch(_ id: CGWindowID) {
+        guard ring.contains(id) else { return }
+        mru.removeAll { $0 == id }
+        mru.insert(id, at: 0)
+    }
+
+    /// Drop windows that left the ring from the recency order and the last trade.
+    public mutating func pruneMRU() {
+        let members = Set(ring)
+        mru.removeAll { !members.contains($0) }
+        if let t = lastTrade, !members.contains(t.a) || !members.contains(t.b) { lastTrade = nil }
     }
 
     // MARK: - Mutations
@@ -110,6 +187,8 @@ public struct StripState {
         ring[i] = new
         if centerId == old { centerId = new }
         if let slot = pins.first(where: { $0.value == old })?.key { pins[slot] = new }
+        if let j = mru.firstIndex(of: old) { mru[j] = new }
+        lastTrade = nil
     }
 
     /// Absorb a freshly-discovered window into the film, positioned per `placement`. Pure (mutates
@@ -192,38 +271,89 @@ public struct StripState {
         return rebuilt
     }
 
-    /// Swap the window in the *focused* slot with whichever window occupies its immediate neighbor
-    /// slot in direction `dir` (+1 right / −1 left) — a clean two-window exchange, guaranteed to land
-    /// the carried window in that exact neighbor slot. Keyboard focus rides along with it. No-op if
-    /// the focused slot is empty/pinned, or has no unpinned neighbor in that direction (e.g. already
-    /// at the strip's edge, or monocle) — pinned windows never move and are skipped over when looking
-    /// for a neighbor, since they don't participate in the flow.
-    ///
-    /// The anchor slot always *displays* `centerId` by identity, not by ring position (see
-    /// `resolve()`) — so a swap that moves a window into or out of the anchor slot must also hand
-    /// `centerId` to whichever window is now anchoring, or the swap wouldn't actually relocate the
-    /// anchor's displayed window (it would keep showing the old centerId, wherever it drifted to).
-    /// With cols 1–3 every reachable adjacent slot pair includes the anchor, so this fixup covers
-    /// every swap this method can perform today.
-    ///
-    /// Pure (mutates only `self`) so the swap is unit-testable without AppKit/AX.
-    public mutating func moveFocused(_ dir: Int) {
-        guard pins[focusSlot] == nil else { return }
-        let assign = StripLayout(self).assignment()
-        guard let a = assign[focusSlot] else { return }
-
-        let unpinnedSlots = slots.filter { pins[$0] == nil }
-        guard let fi = unpinnedSlots.firstIndex(of: focusSlot) else { return }
-        let ni = fi + dir
-        guard unpinnedSlots.indices.contains(ni) else { return }
-        let neighborSlot = unpinnedSlots[ni]
-        guard let b = assign[neighborSlot], a != b,
-              let ia = ring.firstIndex(of: a), let ib = ring.firstIndex(of: b) else { return }
-
+    /// Swap the ring positions of `a` and `b`. Every other window keeps its slot, so only these two
+    /// move. If either one was the (resolved) center, the other becomes it: the anchor slot shows
+    /// `centerId` by identity, not by ring position (see `resolve()`).
+    private mutating func swapInRing(_ a: CGWindowID, _ b: CGWindowID) {
+        guard let ia = ring.firstIndex(of: a), let ib = ring.firstIndex(of: b) else { return }
+        let center = StripLayout(self).resolve().centerId
         ring.swapAt(ia, ib)
-        if centerId == a { centerId = b } else if centerId == b { centerId = a }
-        focusSlot = neighborSlot
+        centerId = center == a ? b : (center == b ? a : center)
+    }
+
+    /// Draw `pile[0]` into `seat` (⌃⌥U / I / O): the two windows swap, so nothing else moves, and the
+    /// displaced window goes to the top of the pile, so drawing again toggles back. A draw into the
+    /// primary seat (C; L in 2-up) moves focus there; a draw into a satellite leaves focus where it
+    /// was. An explicit draw works on a locked seat too: the lock stays and now holds the drawn
+    /// window. Returns nil (no-op) when the pile is empty or the seat is empty.
+    @discardableResult
+    public mutating func draw(into seat: Slot) -> Draw? {
+        guard slots.contains(seat) else { return nil }
+        let r = StripLayout(self).resolve()
+        guard let displaced = r.assign[seat], let drawn = pile.first, drawn != displaced else { return nil }
+        swapInRing(displaced, drawn)
+        if pins[seat] == displaced { pins[seat] = drawn }
+        mru.removeAll { $0 == displaced }
+        if seat == primarySlot {
+            focusSlot = seat
+            touch(drawn)
+            mru.insert(displaced, at: min(1, mru.count))
+        } else {
+            mru.insert(displaced, at: 0)
+        }
         clampToValidSlots()
+        return Draw(drawn: drawn, displaced: displaced, seat: seat)
+    }
+
+    /// Trade the focused window with the window in `target` (⌃⌥⇧U / I / O): a two-window swap, and
+    /// focus goes with the focused window. Any pair works, L↔R included. No-op in monocle, on an
+    /// empty or locked seat, or when `target` is the focused seat. Records `lastTrade`.
+    @discardableResult
+    public mutating func trade(with target: Slot) -> Trade? {
+        guard cols > 1, slots.contains(target) else { return nil }
+        let r = StripLayout(self).resolve()
+        let from = r.focusSlot
+        guard from != target, pins[from] == nil, pins[target] == nil,
+              let a = r.assign[from], let b = r.assign[target], a != b else { return nil }
+        swapInRing(a, b)
+        focusSlot = target
+        let t = Trade(a: a, b: b, from: from, to: target)
+        lastTrade = t
+        clampToValidSlots()
+        return t
+    }
+
+    /// Promote (⌃⌥↩; ⌃⌥⇧I from a satellite is the same trade): the focused satellite's window trades
+    /// into the primary seat and focus goes with it. With focus already on the primary seat, this
+    /// undoes `lastTrade` instead: the same two windows trade back (trade ∘ trade = id), and focus
+    /// stays on the primary seat. No-op in monocle.
+    @discardableResult
+    public mutating func promote() -> Trade? {
+        guard cols > 1 else { return nil }
+        let r = StripLayout(self).resolve()
+        if r.focusSlot != primarySlot { return trade(with: primarySlot) }
+        guard let t = lastTrade,
+              let sa = r.assign.first(where: { $0.value == t.a })?.key,
+              let sb = r.assign.first(where: { $0.value == t.b })?.key,
+              sa != sb, pins[sa] == nil, pins[sb] == nil else { return nil }
+        swapInRing(t.a, t.b)
+        let undo = Trade(a: t.a, b: t.b, from: sa, to: sb)
+        lastTrade = undo
+        return undo
+    }
+
+    /// Promote window `id`, which the user committed to in a visible satellite (a committed click,
+    /// ⌘Tab), into the primary seat; focus goes with it. Never from a locked seat, from the primary
+    /// seat itself, or in monocle.
+    @discardableResult
+    public mutating func promote(_ id: CGWindowID) -> Trade? {
+        guard cols > 1,
+              let slot = StripLayout(self).assignment().first(where: { $0.value == id })?.key,
+              slot != primarySlot, pins[slot] == nil else { return nil }
+        let saved = focusSlot
+        focusSlot = slot
+        guard let t = trade(with: primarySlot) else { focusSlot = saved; return nil }
+        return t
     }
 
     /// Follow focus that arrived from outside Strip (a click, ⌘Tab, Dock) into window `id`: put
@@ -252,6 +382,9 @@ public struct StripState {
         ring.swapAt(i, j)
         centerId = id
         focusSlot = anchor
+        touch(id)
+        mru.removeAll { $0 == old }
+        mru.insert(old, at: min(1, mru.count)) // the displaced center tops the pile
         clampToValidSlots()
         return old
     }

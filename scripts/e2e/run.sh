@@ -34,8 +34,10 @@ SCENARIOS=(
   scenario_focus_follow
   scenario_focus_handoff_cancel
   scenario_summon_parked
+  scenario_draw
+  scenario_trade_promote
+  scenario_cmd_tab_promote
   scenario_focus_move
-  scenario_move_focused_swap
   scenario_pin_unpin
   scenario_release_resume
   scenario_layout_submenu

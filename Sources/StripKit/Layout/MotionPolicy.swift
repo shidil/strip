@@ -50,4 +50,10 @@ public enum MotionPolicy {
             return onIsLeft != offIsLeft
         }
     }
+
+    /// Whether a trade between seats `a` and `b` is a cut rather than a spring. Neighbors spring;
+    /// L↔R in 3-up would spring both windows through C, so it cuts. (Seats & Pile slice 1.)
+    public static func tradeCuts(_ a: Slot, _ b: Slot, cols: Int) -> Bool {
+        cols >= 3 && Set([a, b]) == [.L, .R]
+    }
 }

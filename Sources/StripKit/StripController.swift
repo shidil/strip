@@ -110,14 +110,16 @@ public final class StripController {
         }
         focusRingEnabled = s.focusRingEnabled
         railEdge = s.railEdge
-        Log.line("restored settings: \(state.cols)-up, focusRatio \(String(format: "%.2f", state.config.focusRatio)), height \(String(format: "%.2f", state.config.heightFraction)), ring \(focusRingEnabled ? "on" : "off"), rail \(railEdge.rawValue)")
+        clickToCenter = s.clickToCenter
+        Log.line("restored settings: \(state.cols)-up, focusRatio \(String(format: "%.2f", state.config.focusRatio)), height \(String(format: "%.2f", state.config.heightFraction)), ring \(focusRingEnabled ? "on" : "off"), rail \(railEdge.rawValue), click-to-center \(clickToCenter ? "on" : "off")")
     }
 
     /// Persist the current sizing knobs and layout posture.
     private func persist() {
         PersistedSettings(config: state.config, cols: state.cols,
                           emphasisEqual: state.emphasis == .equal, springIndex: springIndex,
-                          focusRingEnabled: focusRingEnabled, railEdge: railEdge).save()
+                          focusRingEnabled: focusRingEnabled, railEdge: railEdge,
+                          clickToCenter: clickToCenter).save()
     }
 
     /// Show or hide the focus ring (status-bar toggle). Persists, then refreshes the overlay
@@ -238,6 +240,7 @@ public final class StripController {
         windowsById = [:]
         for id in state.ring { windowsById[id] = allById[id] }
         constraints = constraints.filter { windowsById[$0.key] != nil }
+        state.pruneMRU()
         normalize()
     }
 
@@ -383,12 +386,135 @@ public final class StripController {
         state.focusSlot = state.focusSlotAfterMove(dir)
     }
 
-    /// Carry the *focused* window along the film, reordering it (`moveFocused`, prototype lines
-    /// 341-347) — the state transition lives in `StripState.moveFocused` (pure, unit-tested); this
-    /// just re-applies so the reordered film re-tiles.
-    public func moveFocused(_ dir: Int) {
-        state.moveFocused(dir)
+    // MARK: - Seats & Pile: draw, trade, promote (slice 1)
+
+    /// Draw `pile[0]` into the seat `key` names (⌃⌥U / I / O). A cut: both windows snap and nothing
+    /// else moves. A draw into the primary seat focuses it; a satellite draw leaves focus alone. The
+    /// state change is `StripState.draw` (pure, unit-tested).
+    public func draw(_ key: SeatKey) {
+        cancelPendingPromote()
+        let seat = state.seat(for: key)
+        guard let d = state.draw(into: seat) else {
+            Log.line("draw: nothing to draw into \(seat.rawValue) — the pile is empty")
+            return
+        }
+        Log.line("draw: \(appName(d.drawn)) → \(seat.rawValue) (\(appName(d.displaced)) to the pile)")
+        animator.snapNext([d.drawn, d.displaced])
         apply()
+    }
+
+    /// Trade the focused window with the seat `key` names (⌃⌥⇧U / I / O); focus goes with it.
+    public func trade(_ key: SeatKey) {
+        cancelPendingPromote()
+        let target = state.seat(for: key)
+        guard let t = state.trade(with: target) else {
+            Log.line("trade: no-op (focus \(state.focusSlot.rawValue), target \(target.rawValue))")
+            return
+        }
+        applyTrade(t, "trade", reason: "⌃⌥⇧\(key.rawValue.uppercased())")
+    }
+
+    /// Promote the focused satellite into the primary seat (⌃⌥↩); on the primary seat, undo the
+    /// last trade.
+    public func promote() {
+        cancelPendingPromote()
+        let undo = state.focusSlot == state.primarySlot
+        guard let t = state.promote() else {
+            Log.line("promote: no-op (\(undo ? "no trade to undo" : "locked seat or monocle"))")
+            return
+        }
+        applyTrade(t, undo ? "promote-undo" : "promote", reason: "⌃⌥↩")
+    }
+
+    /// Promote window `id`, which the user committed to in a satellite (a committed click, ⌘Tab).
+    /// The OS already focused it, so `apply()` must not re-activate anything.
+    private func promoteWindow(_ id: CGWindowID, reason: String) {
+        guard let t = state.promote(id) else { return }
+        lastFocusedId = id
+        applyTrade(t, "promote", reason: reason)
+    }
+
+    /// Log and apply a trade. Neighbors spring; L↔R in 3-up cuts (`MotionPolicy.tradeCuts`).
+    private func applyTrade(_ t: Trade, _ verb: String, reason: String) {
+        let cut = MotionPolicy.tradeCuts(t.from, t.to, cols: state.cols)
+        Log.line("\(verb): \(appName(t.a)) \(t.from.rawValue) → \(t.to.rawValue), \(appName(t.b)) \(t.to.rawValue) → \(t.from.rawValue) (\(cut ? "cut" : "spring")) ← \(reason)")
+        if cut { animator.snapNext([t.a, t.b]) }
+        apply()
+    }
+
+    private func appName(_ id: CGWindowID) -> String { windowsById[id]?.appName ?? "?" }
+
+    // MARK: - Automatic promote (behind the click-to-center setting)
+
+    /// Whether a committed click on a satellite, or ⌘Tab into one, promotes it into the primary seat
+    /// (status menu "Center on click or ⌘Tab"). **Off by default until Spaces support lands**
+    /// (Seats & Pile slice 5): a Space round trip can re-admit every window as new today, which
+    /// would set automatic promotes off by mistake. Persisted.
+    public private(set) var clickToCenter = false
+    /// Fired when `clickToCenter` changes, so the observer starts or stops detecting committed clicks.
+    public var onClickToCenterChanged: ((Bool) -> Void)?
+
+    public func setClickToCenter(_ on: Bool) {
+        guard on != clickToCenter else { return }
+        clickToCenter = on
+        if !on { cancelPendingPromote() }
+        Log.line("click-to-center: \(on ? "on" : "off")")
+        onClickToCenterChanged?(on)
+        persist()
+    }
+
+    /// The pending ⌘-attributed promote (`scheduleCommandKeyPromote`).
+    private var promoteWork: DispatchWorkItem?
+    /// The managed window external focus last arrived in, and when (media time).
+    private var focusArrival: (id: CGWindowID, at: CFTimeInterval)?
+
+    /// Drop a pending ⌘-attributed promote: the user did something else first.
+    public func cancelPendingPromote() {
+        promoteWork?.cancel()
+        promoteWork = nil
+    }
+
+    /// External focus arrived in window `id`. If the user caused it with a ⌘ key (⌘Tab, ⌘`) and the
+    /// window sits in a satellite, promote it once focus has rested there for
+    /// `PromotePolicy.commandKeySettle`. Mouse-caused focus waits for the committed-click detector
+    /// instead (`handleCommittedClick`), so a double-click or drag never promotes.
+    private func scheduleCommandKeyPromote(_ id: CGWindowID) {
+        cancelPendingPromote()
+        let who = PromotePolicy.attribution(now: CACurrentMediaTime(), lastInput: lastUserInput,
+                                            at: lastUserInputAt)
+        guard PromotePolicy.focusPromotes(enabled: clickToCenter, attribution: who), state.cols > 1,
+              let slot = StripLayout(state).assignment().first(where: { $0.value == id })?.key,
+              slot != state.primarySlot, state.pins[slot] == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.promoteWork = nil
+            guard !self.isSuspended,
+                  StripLayout(self.state).activeId == id else { return } // released, or focus moved on
+            self.promoteWindow(id, reason: "⌘ key")
+        }
+        promoteWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + PromotePolicy.commandKeySettle, execute: work)
+    }
+
+    /// A committed click (`ClickCommitTracker`) at `point` (Quartz global). Promote the focused
+    /// window when it sits in an unlocked satellite and the click put focus there: the click landed
+    /// on it, or focus arrived in it after the mouseDown (a Dock or notification click).
+    public func handleCommittedClick(at point: CGPoint) {
+        guard clickToCenter, !isSuspended, state.cols > 1,
+              let focus = systemFocus?(), let id = focus.id, windowsById[id] != nil else { return }
+        let slot = StripLayout(state).assignment().first { $0.value == id }?.key
+        let locked = slot.map { state.pins[$0] != nil } ?? false
+        let clicked = ax.windowID(at: point)
+        let arrived = focusArrival.map { $0.id == id && $0.at >= lastMouseDownAt } ?? false
+        guard PromotePolicy.clickPromotes(enabled: clickToCenter, focused: id, slot: slot,
+                                          primary: state.primarySlot, locked: locked, clicked: clicked,
+                                          focusArrivedSinceMouseDown: arrived) else {
+            if let slot, slot != state.primarySlot {
+                Log.line("click: committed in \(appName(id)) (\(slot.rawValue)) — not promoted (\(locked ? "locked seat" : "the click didn't land on it"))")
+            }
+            return
+        }
+        promoteWindow(id, reason: "click")
     }
 
     /// Pin/unpin the focused slot (⌃⌥P). The engine already honors `state.pins`; the state mutation
@@ -597,6 +723,7 @@ public final class StripController {
             // Set on main *before* the off-main activation lands; the 0.2s grace covers the hop.
             self.onWillActivate?(w.ax.pid)
             self.lastFocusedId = id
+            self.state.touch(id)
             self.animator.focusAttributes(w.ax) // cross-process AX off-main (the ~20ms part)
             w.ax.activateApp()                  // AppKit app-activation stays on main (cheap, ~1–2ms)
         }
@@ -705,11 +832,17 @@ public final class StripController {
     /// (summoning them into a slot is a separate slice-0 fix).
     private func followExternalFocus(_ id: CGWindowID) {
         guard !focusHandOffPending else { return }
-        guard StripLayout(state).activeId != id else { return } // already the focused slot
-        guard let slot = state.focusFollow(id) else { summonParked(id); return }
-        lastFocusedId = id // the OS already focused it — apply() must not re-activate the old slot
-        Log.line("focus-follow: \(windowsById[id]?.appName ?? "?") → slot \(slot.rawValue)")
-        apply()
+        focusArrival = (id, CACurrentMediaTime())
+        if StripLayout(state).activeId != id {
+            guard let slot = state.focusFollow(id) else { summonParked(id); return }
+            lastFocusedId = id // the OS already focused it — apply() must not re-activate the old slot
+            state.touch(id)
+            Log.line("focus-follow: \(windowsById[id]?.appName ?? "?") → slot \(slot.rawValue)")
+            apply()
+        } else {
+            state.touch(id)
+        }
+        scheduleCommandKeyPromote(id)
     }
 
     /// Focus landed on a **parked** managed window. If the user caused it (a click or ⌘ key just
@@ -729,20 +862,29 @@ public final class StripController {
         apply()
     }
 
-    /// When the user last clicked (outside Strip) or pressed a ⌘ key — media time; −∞ if never.
+    /// The user's last click (outside Strip) or ⌘ key, and when — media time; −∞ if never.
+    private var lastUserInput: UserInput?
     private var lastUserInputAt: CFTimeInterval = -.infinity
+    /// When the user last pressed the left mouse button outside Strip.
+    private var lastMouseDownAt: CFTimeInterval = -.infinity
 
     /// Record user input for activation attribution (wired to the mouse monitor and the hotkey tap).
-    public func noteUserInput() { lastUserInputAt = CACurrentMediaTime() }
-
-    /// How recent the user's own input must be for a focus change to count as theirs.
-    static let userCauseWindow: CFTimeInterval = 1.0
+    /// A click also drops a pending ⌘-attributed promote: the user moved on.
+    public func noteUserInput(_ kind: UserInput) {
+        let now = CACurrentMediaTime()
+        lastUserInput = kind
+        lastUserInputAt = now
+        if kind == .mouse {
+            lastMouseDownAt = now
+            cancelPendingPromote()
+        }
+    }
 
     /// Whether a focus change at `now` was caused by the user: a click or ⌘ key within
-    /// `userCauseWindow` before it (⌘Tab's release → activation → 75 ms observer debounce all fit).
-    /// Pure → unit-testable.
+    /// `PromotePolicy.userCauseWindow` before it (⌘Tab's release → activation → 75 ms observer
+    /// debounce all fit). Pure → unit-testable.
     static func isUserCaused(now: CFTimeInterval, lastUserInput: CFTimeInterval) -> Bool {
-        now - lastUserInput <= userCauseWindow
+        now - lastUserInput <= PromotePolicy.userCauseWindow
     }
 
     // MARK: - Respect user drags (M7 Slice 4)
@@ -817,6 +959,7 @@ public final class StripController {
     public func releaseAll() {
         if isSuspended { resume(); return }
 
+        cancelPendingPromote()
         screen = activeScreen()
         let n = unparkStranded(in: screen.quartzVisibleFrame)
         isSuspended = true
@@ -844,6 +987,7 @@ public final class StripController {
         windowsById[id] = nil
         constraints[id] = nil
         state.pins = state.pins.filter { $0.value != id }
+        state.pruneMRU()
         if state.centerId == id {
             state.centerId = Self.neighborOfClosedCenter(in: old, survivors: Set(state.ring))
                 ?? state.ring.first

@@ -62,6 +62,24 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(settings.railEdge, .bottom, "missing edge defaults to .bottom, decode succeeds")
     }
 
+    /// Click-to-center is off by default until Spaces support lands (Seats & Pile slice 5): an older
+    /// blob without the flag must decode with it off.
+    func testSettingsDecodesOlderBlobWithClickToCenterOff() throws {
+        let legacy = """
+        {"config":{"outerPadding":8,"innerGap":8,"focusRatio":0.5,"monocleWidthFraction":0.6,"heightFraction":1.0,"newWindowPlacement":"focusCenter"},"cols":3,"emphasisEqual":false,"springIndex":0,"focusRingEnabled":true,"railEdge":"bottom"}
+        """.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(PersistedSettings.self, from: legacy)
+        XCTAssertFalse(settings.clickToCenter)
+        XCTAssertFalse(PersistedSettings(config: .default, cols: 3, emphasisEqual: false, springIndex: 0).clickToCenter)
+    }
+
+    func testClickToCenterRoundTripsThroughSettings() throws {
+        let original = PersistedSettings(config: .default, cols: 3, emphasisEqual: false, springIndex: 0,
+                                         clickToCenter: true)
+        let decoded = try JSONDecoder().decode(PersistedSettings.self, from: JSONEncoder().encode(original))
+        XCTAssertTrue(decoded.clickToCenter)
+    }
+
     func testRailEdgeRoundTripsThroughSettings() throws {
         let original = PersistedSettings(
             config: .default, cols: 3, emphasisEqual: false, springIndex: 0, railEdge: .left)
