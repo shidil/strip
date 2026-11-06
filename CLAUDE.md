@@ -108,9 +108,10 @@ status-bar menu                ─┴─▶ StripController ──▶ StripLayou
                                         └─ AccessibilityService: enumerate/track real windows
 ```
 
-- **`StripLayout` + `SlotGeometry` + `StripState` (`Layout/`, `Model/`) are pure** — no AppKit side
-  effects, fully unit-tested. This is the faithful port of the prototype's `geom()`/`resolve()`/
-  `computeVM()`. `resolve()` does pin-aware ring rotation (which window lands in which slot);
+- **`StripLayout` + `SlotGeometry` + `StripState` (`Layout/`, `Model/`, and the `StripCore` target)
+  are pure** — no AppKit side effects, fully unit-tested. This is the faithful port of the
+  prototype's `geom()`/`resolve()`/`computeVM()`. `StripCore` must not import `StripKit`; StripKit
+  re-exports it (`StripCoreExports.swift`), so StripKit files see its types without an import. `resolve()` does pin-aware ring rotation (which window lands in which slot);
   `placements(in:)` projects slot geometry onto the display's visible frame and pushes off-strip
   windows fully off the edge ("parked"). All layout/feature logic should go here so it stays testable.
 - **`StripController`** is the only stateful coordinator: it owns `StripState` and the managed-window

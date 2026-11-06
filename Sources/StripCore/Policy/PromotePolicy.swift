@@ -1,5 +1,5 @@
 import CoreGraphics
-import QuartzCore
+import Foundation
 
 /// What the user did most recently, for attributing a focus change (Seats & Pile).
 public enum UserInput: Equatable {

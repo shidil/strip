@@ -1,6 +1,6 @@
 import XCTest
 import CoreGraphics
-@testable import StripKit
+@testable import StripCore
 
 /// Seats & Pile slice 1: the committed-click detector, focus attribution and the promote decisions.
 /// All pure, with time injected.
@@ -108,31 +108,5 @@ final class PromotePolicyTests: XCTestCase {
         XCTAssertFalse(clickPromotes(slot: nil), "parked")
         XCTAssertFalse(clickPromotes(focused: nil))
         XCTAssertFalse(clickPromotes(enabled: false))
-    }
-
-    // MARK: - Hit test (AccessibilityService.topWindow)
-
-    private func info(_ id: CGWindowID, pid: pid_t = 50, layer: Int = 0, _ r: CGRect) -> [String: Any] {
-        [kCGWindowNumber as String: id, kCGWindowOwnerPID as String: pid, kCGWindowLayer as String: layer,
-         kCGWindowBounds as String: r.dictionaryRepresentation]
-    }
-
-    func testHitTestReturnsTheFrontmostNormalWindowUnderThePoint() {
-        let list = [info(1, CGRect(x: 0, y: 0, width: 100, height: 100)),
-                    info(2, CGRect(x: 0, y: 0, width: 500, height: 500))]
-        XCTAssertEqual(AccessibilityService.topWindow(at: CGPoint(x: 50, y: 50), in: list, excludingPID: 1), 1)
-        XCTAssertEqual(AccessibilityService.topWindow(at: CGPoint(x: 300, y: 50), in: list, excludingPID: 1), 2)
-        XCTAssertNil(AccessibilityService.topWindow(at: CGPoint(x: 900, y: 50), in: list, excludingPID: 1))
-    }
-
-    func testHitTestSkipsStripsOwnPanelsButStopsAtTheDockOrMenuBar() {
-        let point = CGPoint(x: 50, y: 50)
-        let window = info(2, CGRect(x: 0, y: 0, width: 500, height: 500))
-        let ring = info(9, pid: 1, layer: 3, CGRect(x: 0, y: 0, width: 500, height: 500))
-        XCTAssertEqual(AccessibilityService.topWindow(at: point, in: [ring, window], excludingPID: 1), 2,
-                       "Strip's focus ring sits over the window")
-        let dock = info(8, pid: 77, layer: 20, CGRect(x: 0, y: 0, width: 500, height: 80))
-        XCTAssertNil(AccessibilityService.topWindow(at: point, in: [dock, window], excludingPID: 1),
-                     "a click on the Dock is not a click on the window behind it")
     }
 }

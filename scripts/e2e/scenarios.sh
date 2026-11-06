@@ -675,7 +675,7 @@ scenario_window_height() {
 }
 
 # Tighten/loosen the inter-window gap and outer padding together (⌃⌥[ / ⌃⌥]). Only floored at 0 (no
-# upper bound — Model/LayoutConfig.swift / StripController.adjustGap), so loosening first (away from
+# upper bound — StripCore/Vocabulary/LayoutConfig.swift / StripController.adjustGap), so loosening first (away from
 # that floor) then tightening back by the same fixed step (4pt) round-trips exactly regardless of
 # whatever value a prior run's persisted state left it at.
 scenario_gap_padding() {

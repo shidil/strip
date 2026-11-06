@@ -13,7 +13,9 @@ that justifies it.** You are a gate, not a fixer.
 
 A diff touching any hot path:
 - `Sources/StripKit/Animation/` — springs, `WindowAnimator`, `setFrame`, write coalescing.
-- `Sources/StripKit/Layout/` — `resolve()`, `placements`, `SlotGeometry`.
+- `Sources/StripKit/Layout/` — `resolve()`, `placements`.
+- `Sources/StripCore/` — `SlotGeometry`, and (Seats & Pile step 2 onward) the reducer and `MovePlan`,
+  which sit on every event's hot path.
 - AX enumeration / reconcile — `AccessibilityService`, `WindowObserver`, `AXAttrCache`,
   `StripController.refresh()`.
 - Any change whose justification is "faster", "cheaper", "fewer IPC", "less main-thread work".

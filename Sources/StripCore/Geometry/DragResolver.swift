@@ -7,7 +7,7 @@ import CoreGraphics
 /// Kept pure (`CGRect` math only, no AppKit/AX) so the "which knob does this resize map to, and to
 /// what value" logic is unit-tested directly — `StripController` just decides *whether* a given
 /// dragged window is the dominant one and feeds its live frame in here.
-enum DragResolver {
+public enum DragResolver {
     /// Invert the emphasized slot's geometry: produce the `LayoutConfig` that would place the
     /// dominant window at `frame` within `vis`.
     ///
@@ -21,7 +21,7 @@ enum DragResolver {
     /// All values are clamped to `LayoutConfig`'s ranges. This is the exact inverse of
     /// `SlotGeometry.rects(...)` for the emphasized slot, so feeding a slot rect straight back here
     /// round-trips to (approximately) the same config.
-    static func resizeConfig(focusFrame frame: CGRect, vis: CGRect, cols: Int,
+    public static func resizeConfig(focusFrame frame: CGRect, vis: CGRect, cols: Int,
                              emphasis: Emphasis, base: LayoutConfig) -> LayoutConfig {
         var cfg = base
         let pad = max(0, base.outerPadding)

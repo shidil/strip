@@ -56,12 +56,19 @@ own overlays — **never** to move managed app windows.
 ## Architecture / file map (what exists today)
 
 ```
-Package.swift                      swift-tools 6.0; StripKit lib + Strip exe + StripKitTests; lang v5
+Package.swift                      swift-tools 6.0; StripCore + StripKit libs, Strip exe, StripCoreTests +
+                                   StripKitTests; lang v5 everywhere
 Makefile                           build / bundle / run / open / test / clean / setup-signing
 Resources/Info.plist               LSUIElement agent, bundle id io.github.shidil.strip
 scripts/setup-signing.sh           creates self-signed "Strip Dev" code-signing identity
 
 Sources/Strip/main.swift           thin entry: .accessory NSApplication + AppDelegate
+
+Sources/StripCore/                 pure core (ADR-0006): no AppKit/AX/os; never imports StripKit;
+                                   StripKit re-exports it (StripKit/StripCoreExports.swift)
+  Vocabulary/                      Slot{L,C,R}, Emphasis, SeatKey, Trade, Draw; LayoutConfig; SizeConstraint
+  Geometry/                        SlotGeometry (slot rects), DragResolver, MotionPolicy
+  Policy/                          PromotePolicy, ClickCommitTracker (time injected)
 
 Sources/StripKit/
   AppDelegate.swift                menu-bar agent; permission gate; status menu (layout switching);
@@ -73,7 +80,7 @@ Sources/StripKit/
   Model/
     Theme.swift                    accent palette + letter chips (FNV-1a stable hash per app)
     ManagedWindow.swift            id(CGWindowID)+AXWindow+app/title/frame
-    StripState.swift               Slot{L,C,R}, Emphasis, StripState, slots/primarySlot, posMod()
+    StripState.swift               StripState (the ring), slots/primarySlot, posMod()
   Accessibility/
     AXWindow.swift                 read/write AX frame; setFrame uses set-size-twice; raise()
     AccessibilityService.swift     ensureTrusted(); allWindows(); windows(on:)
@@ -81,8 +88,6 @@ Sources/StripKit/
     EnhancedUI.swift               toggle AXEnhancedUserInterface per app
   Layout/
     Coordinates.swift              Quartz(top-left) <-> Cocoa(bottom-left); NSScreen.quartz*Frame
-    SlotGeometry.swift             prototype geom() pixel constants / stage 1440x900, projected as
-                                   FRACTIONS of the visible frame (fills screen, incl. ultrawide)
     StripLayout.swift              pure: resolve() + placements(in:) -> [WindowPlacement]
   Animation/
     Spring.swift                   SpringConfig (Track/Pop/Glide) + RectSpring (semi-implicit Euler)
@@ -95,6 +100,7 @@ Sources/StripKit/
     WindowSearch.swift             pure: fuzzyMatch / rankSearch / query edits / pickTabGroup
   Accessibility/TabScanner.swift   bounded off-main AX walk for a window's tab bar; AXPress a tab
 
+Tests/StripCoreTests/              pure core: SizeConstraint, DragResolver, MotionPolicy, PromotePolicy
 Tests/StripKitTests/
   ThemeTests.swift                 stable hash / accent / letter
   StripLayoutTests.swift           ring rotation, wrap, pins, monocle, 2-up, geometry fidelity

@@ -5,9 +5,17 @@ let package = Package(
     name: "Strip",
     platforms: [.macOS(.v14)],
     targets: [
-        // All app logic lives here so it can be unit-tested without the executable entry point.
+        // The pure core: model, geometry and policies. No AppKit, no AX, no os (ADR-0006).
+        // StripCore must not import StripKit; StripKit depends on StripCore and re-exports it.
+        .target(
+            name: "StripCore",
+            path: "Sources/StripCore",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        // The platform layer and app logic, unit-testable without the executable entry point.
         .target(
             name: "StripKit",
+            dependencies: ["StripCore"],
             path: "Sources/StripKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
@@ -16,6 +24,12 @@ let package = Package(
             name: "Strip",
             dependencies: ["StripKit"],
             path: "Sources/Strip",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "StripCoreTests",
+            dependencies: ["StripCore"],
+            path: "Tests/StripCoreTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

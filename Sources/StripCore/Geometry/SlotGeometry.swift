@@ -13,9 +13,9 @@ import CoreGraphics
 /// shrunk to it, and the difference is redistributed among the slots still free to move. When the
 /// floors alone exceed the usable width the floors are emitted anyway — commanded = achievable, so
 /// overlap becomes an honest last resort instead of a silent clamp the layout doesn't know about.
-enum SlotGeometry {
+public enum SlotGeometry {
     /// Ordered, on-screen slot rects for `cols`/`emphasis`/`focusSlot` within the visible frame `vis`.
-    static func rects(cols: Int, emphasis: Emphasis, focusSlot: Slot, in vis: CGRect,
+    public static func rects(cols: Int, emphasis: Emphasis, focusSlot: Slot, in vis: CGRect,
                       config: LayoutConfig,
                       requirements: [Slot: SizeConstraint] = [:]) -> [Slot: CGRect] {
         let pad = max(0, config.outerPadding)
@@ -123,5 +123,5 @@ enum SlotGeometry {
 
     /// Vertical center line of the strip within `vis` (used to vertically center parked windows).
     /// With full-height windows the strip is simply centered in the visible frame.
-    static func centerY(in vis: CGRect) -> CGFloat { vis.midY }
+    public static func centerY(in vis: CGRect) -> CGFloat { vis.midY }
 }
