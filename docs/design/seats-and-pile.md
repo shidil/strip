@@ -1,6 +1,6 @@
 # Design: Seats & Pile
 
-**Status:** Accepted (owner decisions recorded 2026-11-06)
+**Status:** Accepted (owner decisions recorded 2026-11-06). Slices 0–1 shipped.
 **Replaces:** M8 "Workspaces" and M10 "2-D film" in [`PLAN.md`](../../PLAN.md)
 **Origin:** design debate on 2026-11-05: four designer agents (card-table, posture & calm motion,
 macOS-native realist, spatial memory) proposed, then each critiqued the other three, then a judge
@@ -73,7 +73,7 @@ ordered outward from the center. From then on, real recency takes over.
 | Any card into any seat | Overview / search / rail chip | See *Picking a target seat*. A window from the pile is drawn; a window already in a seat trades. | 2 (cut from the pile; spring for neighbors; cut for L↔R) |
 | Trade with a seat | ⌃⌥⇧U / I / O | The focused window trades with that seat's window, and focus goes with it. ⌃⌥⇧I from a satellite is **promote**. | 2: spring for neighbors, cut for L↔R |
 | Promote explicitly | ⌃⌥↩ (alias of ⌃⌥⇧I) | The focused satellite trades with C. If focus is on C, this undoes `lastTrade`. | 2, about 1 seat each |
-| **Click a satellite** *(on by default; owner decision 1)* | Mouse | Focus follows immediately with 0 motion. A promote fires on a **committed click**: on mouse-up, with less than 4 px of travel, clickCount 1, and no new mouseDown or scroll within `NSEvent.doubleClickInterval`. It never fires on a locked seat, a drag, a text selection or a double-click. A setting turns it off. | 0, then 2 |
+| **Click a satellite** *(on by default once slice 5 lands; owner decision 1. Until then it sits behind the "Center on click or ⌘Tab" setting, off by default; owner decision 2026-11-06)* | Mouse | Focus follows immediately with 0 motion. A promote fires on a **committed click**: on mouse-up, with less than 4 px of travel, clickCount 1, and no new mouseDown or scroll within `NSEvent.doubleClickInterval`. It never fires on a locked seat, a drag, a text selection or a double-click. A setting turns it off. | 0, then 2 |
 | External focus into a visible satellite | ⌘Tab / Dock / notification / ⌘` | Focus follows. A promote fires after a 250 ms trailing settle, **only when the user caused it**: a ⌘-keyDown or a mouseDown within the last 1 s. An app that activates itself only moves focus. | 0, then 2 |
 | External focus into a parked window | Same triggers | If the user caused it: after a 120 ms coalesce, draw the window into C as a cut. If not: nothing moves, and the pill says "Focus is in parked ‹App› — ⌃⌥I". | 2, cut |
 | New window | `refresh()` | A focused new window (⌘N, app launch) goes into C, and the old C goes to `pile[0]`. A background or batch window goes to the pile with a static "new" dot. If C is locked, the window takes the first unlocked seat, R then L. Small windows still float. | 1 visible + 1 parked |
@@ -154,6 +154,9 @@ There is one `Table` per macOS Space, kept in a `[SpaceKey: Table]` map.
 - No AX writes while a Space transition is in progress.
 - Suspend management in fullscreen Spaces and under Stage Manager.
 - **The automatic behaviors (click-promote, summon, parked draw) do not ship before this guard.**
+  Slice 1 ships click-promote and the ⌘Tab-into-satellite promote behind a setting that stays off
+  by default until this guard lands (owner decision 2026-11-06). Slice 0's parked-window summon
+  shipped without the guard; revisit it with slice 5.
   Today a Space round trip probably drops every window and re-adds it as new, which would set off
   those behaviors by mistake.
 

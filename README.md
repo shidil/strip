@@ -65,7 +65,9 @@ Every shortcut is behind <kbd>⌃⌥</kbd> (Control + Option). <kbd>⌃⌥/</kbd
 |---|---|
 | <kbd>⌃⌥H</kbd> / <kbd>⌃⌥L</kbd> | Roll the film to the previous / next window |
 | <kbd>⌃⌥J</kbd> / <kbd>⌃⌥K</kbd>, <kbd>⌃⌥Tab</kbd> | Move focus between slots |
-| <kbd>⌃⌥⇧H</kbd> / <kbd>⌃⌥⇧L</kbd> | Swap the focused window with its neighbor |
+| <kbd>⌃⌥U</kbd> <kbd>⌃⌥I</kbd> <kbd>⌃⌥O</kbd> | Draw the next window from the pile into the left / center / right seat (again: swap back) |
+| <kbd>⌃⌥⇧U</kbd> <kbd>⌃⌥⇧I</kbd> <kbd>⌃⌥⇧O</kbd> | Trade the focused window with the left / center / right seat |
+| <kbd>⌃⌥↩</kbd> | Promote the focused window to the center (on the center: undo the last trade) |
 | <kbd>⌃⌥1</kbd> <kbd>⌃⌥2</kbd> <kbd>⌃⌥3</kbd> | Monocle, two-up, three-up |
 | <kbd>⌃⌥P</kbd> | Pin or unpin the focused slot |
 | <kbd>⌃⌥E</kbd> | Toggle focus emphasis / equal widths |

@@ -40,7 +40,8 @@ accessory app, so its menu is `menu bar 1`, not the usual app's `menu bar 2`).
 | Layout switch 1/2/3-up (hotkey + menu) | Hover-triggered rail preview thumbnails |
 | Slide film prev/next | Minimap drag-rearrange / modifier-click swap (not implemented yet anyway) |
 | Focus move (J/K) | Any interaction needing precise mouse *positioning* over the custom SwiftUI rail/overlay content |
-| `moveFocused` carry-focused swap (⌃⌥⇧H/L) | |
+| Draw into a seat (⌃⌥U/I/O, toggle back), trade with a seat (⌃⌥⇧U/I/O), promote / undo (⌃⌥↩) | Click-to-center: committed click on a satellite promotes it; double-click, drag, text selection and a scroll don't (needs real mouse input) |
+| ⌘Tab into a satellite promotes it only with "Center on click or ⌘Tab" on, and only when a ⌘ key caused it | |
 | Pin/unpin | |
 | Release-all / resume (⌃⌥0) | |
 | Minimap position (all 4 edges, via menu) | |

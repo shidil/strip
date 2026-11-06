@@ -25,6 +25,16 @@ releases begin. Until then, `Resources/Info.plist` identifies experimental snaps
   ADR-0006 (evolve in place with a pure event-driven core); the roadmap replaces workspaces and the
   2-D film with Seats & Pile.
 
+- Draw a window from the pile into a seat: ⌃⌥U / ⌃⌥I / ⌃⌥O put the next parked window into the
+  left / center / right seat and park the one that was there, both instantly. Press again to swap
+  back. In monocle, ⌃⌥I flips between your two most recent windows.
+- Trade the focused window with a named seat: ⌃⌥⇧U / ⌃⌥⇧I / ⌃⌥⇧O. Focus goes with it. These replace
+  ⌃⌥⇧H / ⌃⌥⇧L, which are retired.
+- ⌃⌥↩ promotes the focused side window to the center; on the center it undoes the last trade.
+- "Center on click or ⌘Tab" (status menu, off by default): clicking a side window, or ⌘Tab / a Dock
+  click into one, moves it to the center. A double-click, a drag, a text selection or a scroll never
+  does, and a pinned seat never moves. It stays off by default until Strip understands macOS Spaces.
+
 ### Fixed
 
 - Sliding no longer drags a window across the screen. The wrapping film could flip a parked window
