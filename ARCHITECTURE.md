@@ -64,7 +64,9 @@ Defining characteristics:
 | `Sources/Strip/main.swift` | Process bootstrap | Sets `.accessory` activation policy, constructs `AppDelegate`, calls `app.run()`. |
 | `Sources/StripCore/` | The `StripCore` library target — the pure core (ADR-0006) | No AppKit, no AX, no `os`; must not import `StripKit`. `StripKit` depends on it and re-exports it (`StripCoreExports.swift`). |
 | `Sources/StripCore/Vocabulary/` | Shared pure types | `Slot`, `Emphasis`, `SeatKey`, `Trade`, `Draw`, `LayoutConfig`, `NewWindowPlacement`, `SizeConstraint`. |
-| `Sources/StripCore/Geometry/` | Pure geometry and motion rules | `SlotGeometry` (slot rectangles), `DragResolver` (inverse of `SlotGeometry`), `MotionPolicy` (sweep snaps, L↔R trade cuts). |
+| `Sources/StripCore/Geometry/` | Pure geometry and motion rules | `SlotGeometry` (slot rectangles), `DragResolver` (inverse of `SlotGeometry`), `MotionPolicy` (sweep snaps, L↔R trade cuts), `TableGeometry` (`Stage`, `Edge`, seat rects and pile park frames). |
+| `Sources/StripCore/Table/` | The Seats & Pile model (not wired into the app until step 3) | `Table` (seats, MRU pile, holes, locks), its verbs (draw, trade, promote, pick, summon, pass, look, lock, columns) and `invariantViolations()`. |
+| `Sources/StripCore/Plan/` | Motion between two tables | `transitions(from:to:…)` (stay / spring / cut / snapOffscreen) and `MovePlan` (ordered phases: prepare, show, clear). Park frames and edges are in `Geometry/TableGeometry.swift`. |
 | `Sources/StripCore/Policy/` | Pure timing policies | `PromotePolicy` (focus attribution, promote decisions), `ClickCommitTracker` (committed clicks). |
 | `Sources/StripKit/` | The `StripKit` library target — the platform layer and app logic | Importable and unit-testable without booting AppKit. |
 | `Sources/StripKit/AppDelegate.swift` | App lifecycle, Accessibility permission flow, status menu, the closure-wiring hub (`start()`), command routing | `handle(_:repeated:)` routes hotkey/menu commands to the controller or overlay. |
