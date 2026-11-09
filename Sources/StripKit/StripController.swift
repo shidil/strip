@@ -25,6 +25,9 @@ public final class StripController {
     /// The pending debounced keyboard-focus hand-off (see `scheduleFocus(_:_:)`); cancelled and
     /// rescheduled on each slide so only the window you finally land on gets focused.
     private var focusWork: DispatchWorkItem?
+    /// True from `scheduleFocus` until its work runs or user input cancels it: Strip owes the OS a
+    /// focus hand-off it hasn't delivered yet (Seats & Pile slice 0).
+    private var focusHandOffPending = false
 
     /// How long sliding must be idle before keyboard focus actually moves. `focus()` is 3 synchronous
     /// cross-process AX calls + `activate()` (~20ms for Electron apps); debouncing it keeps that off
@@ -541,7 +544,10 @@ public final class StripController {
         }
         animator.focusedID = layout.activeId // ring tracks the focused window
         if animated {
-            animator.animate(targets, on: screen)
+            let swept = animator.animate(targets, on: screen)
+            for id in swept.sorted() {
+                Log.line("sweep-snap: \(windowsById[id]?.appName ?? "?") — snapped instead of springing across the display")
+            }
         } else {
             animator.snap(targets)
         }
@@ -582,8 +588,10 @@ public final class StripController {
     /// (animator.focusedID / emitFocusFrame) — only the OS focus routing is deferred + off-loaded.
     private func scheduleFocus(_ id: CGWindowID, _ w: ManagedWindow) {
         focusWork?.cancel()
+        focusHandOffPending = true
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            self.focusHandOffPending = false
             // Tell the observer we're about to activate this app, so the activation/focus
             // notifications our own focus() generates don't trigger a redundant reconcile (perf 1.1).
             // Set on main *before* the off-main activation lands; the 0.2s grace covers the hop.
@@ -595,6 +603,36 @@ public final class StripController {
         focusWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusSettleDelay, execute: work)
     }
+
+    /// The user acted on their own — a mouseDown anywhere outside Strip, or a ⌘ keystroke (⌘Tab, ⌘`,
+    /// an app shortcut) — while a focus hand-off was still pending. Drop it: delivering it now would
+    /// activate the slid-to window *after* the user's click or switch and steal their focus. The
+    /// abandoned window counts as handed off, so a later `apply()` doesn't retry it; the focus the
+    /// user's own action produces is then followed normally (`followExternalFocus`).
+    public func cancelPendingFocus(_ reason: String) {
+        guard focusHandOffPending else { return }
+        focusWork?.cancel()
+        focusWork = nil
+        focusHandOffPending = false
+        lastFocusedId = StripLayout(state).activeId
+        Log.line("focus hand-off cancelled ← \(reason)")
+        // Re-sync with where focus really ends up. A click or ⌘Tab elsewhere also posts its own
+        // activation (followed on the observer path), but one that lands back in the window that
+        // already had focus — or a plain ⌘ shortcut — posts nothing, and Strip's focused slot would
+        // stay on the abandoned window. Read the OS focus once the click/switch has settled.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusResyncDelay) { [weak self] in
+            guard let self, let focus = self.systemFocus?(), let id = focus.id,
+                  self.windowsById[id] != nil else { return }
+            self.followExternalFocus(id)
+        }
+    }
+
+    /// Settle time before reading the OS focus after a cancelled hand-off (above the 75 ms observer
+    /// debounce, so the user's own activation has normally been delivered first).
+    private static let focusResyncDelay: TimeInterval = 0.15
+
+    /// Reads the frontmost app's focused window (wired to `WindowObserver.frontmostFocus`).
+    public var systemFocus: (() -> (pid: pid_t, id: CGWindowID?)?)?
 
     /// Build the overlay snapshot from the current state + layout (mirrors prototype `rail` +
     /// the status-bar labels, lines 269-293).
@@ -650,10 +688,61 @@ public final class StripController {
         guard !isSuspended else { return }
         if let id, windowsById[id] != nil {
             Signpost.log.emitEvent("reconcile.skip") // membership unchanged → no enumeration
+            followExternalFocus(id)
             return
         }
         Log.line("observer: focus reconcile fell back to full (focused window \(id.map { "\($0) unmanaged" } ?? "unreadable"), pid \(pid))")
         refreshAndApply() // unknown focused window → full fallback
+    }
+
+    /// Focus landed on managed window `id` from outside Strip (click, ⌘Tab, Dock). Track it — the
+    /// focused slot moves to the window's slot with no window motion (Seats & Pile slice 0) — so J/K
+    /// start from where the user really is, and `apply()` doesn't hand focus back to the old slot.
+    ///
+    /// Skipped while Strip's own focus hand-off is still pending (a J/K or slide just changed the
+    /// focused slot and `scheduleFocus` hasn't delivered yet): the system's focused window is then
+    /// the stale one, and following it would undo the user's keypress. Parked windows are left alone
+    /// (summoning them into a slot is a separate slice-0 fix).
+    private func followExternalFocus(_ id: CGWindowID) {
+        guard !focusHandOffPending else { return }
+        guard StripLayout(state).activeId != id else { return } // already the focused slot
+        guard let slot = state.focusFollow(id) else { summonParked(id); return }
+        lastFocusedId = id // the OS already focused it — apply() must not re-activate the old slot
+        Log.line("focus-follow: \(windowsById[id]?.appName ?? "?") → slot \(slot.rawValue)")
+        apply()
+    }
+
+    /// Focus landed on a **parked** managed window. If the user caused it (a click or ⌘ key just
+    /// before — ⌘Tab, a Dock or notification click), draw the window into the center: a two-entry
+    /// ring swap with the current center, both snapped (a cut — nothing slides across the screen).
+    /// Otherwise (an app activating itself, `open -a`, AppleScript) nothing moves. Seats & Pile slice 0.
+    private func summonParked(_ id: CGWindowID) {
+        let app = windowsById[id]?.appName ?? "?"
+        guard Self.isUserCaused(now: CACurrentMediaTime(), lastUserInput: lastUserInputAt) else {
+            Log.line("parked-focus: \(app) focused without user input — left parked")
+            return
+        }
+        guard let old = state.summon(id) else { return }
+        lastFocusedId = id // the OS already focused it — apply() must not re-activate anything
+        Log.line("summon: \(app) → center (swapped with \(windowsById[old]?.appName ?? "?"))")
+        animator.snapNext([id, old])
+        apply()
+    }
+
+    /// When the user last clicked (outside Strip) or pressed a ⌘ key — media time; −∞ if never.
+    private var lastUserInputAt: CFTimeInterval = -.infinity
+
+    /// Record user input for activation attribution (wired to the mouse monitor and the hotkey tap).
+    public func noteUserInput() { lastUserInputAt = CACurrentMediaTime() }
+
+    /// How recent the user's own input must be for a focus change to count as theirs.
+    static let userCauseWindow: CFTimeInterval = 1.0
+
+    /// Whether a focus change at `now` was caused by the user: a click or ⌘ key within
+    /// `userCauseWindow` before it (⌘Tab's release → activation → 75 ms observer debounce all fit).
+    /// Pure → unit-testable.
+    static func isUserCaused(now: CFTimeInterval, lastUserInput: CFTimeInterval) -> Bool {
+        now - lastUserInput <= userCauseWindow
     }
 
     // MARK: - Respect user drags (M7 Slice 4)

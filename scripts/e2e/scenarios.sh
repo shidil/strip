@@ -89,6 +89,19 @@ _assert_real_frame() {
     echo "    ✗ $app: Strip logged a frame-clamped correction ($clamp_actual) that doesn't match the live real frame ($live)" >&2
     return 1
   fi
+  # Cascade from ANOTHER window: its learned floor re-flowed the row, so a later apply re-targeted
+  # this one (seen in the VM: Preview re-laid from (688 2064) to (756 2013) after a neighbor's
+  # constraint-learned). The contract is convergence on the LATEST commanded frame.
+  local latest expected3
+  if latest=$(_latest_apply_block_since "$since") \
+     && expected3=$(parse_frame_for_literal_app "$latest" "$app") \
+     && [ "$expected3" != "$expected" ]; then
+    for ((i = 0; i < 30; i++)); do
+      live=$(real_window_frame "$app")
+      [ -n "$live" ] && _frames_match "$live" "$expected3" && return 0
+      sleep 0.1
+    done
+  fi
   echo "    ✗ $app: real window frame ($live) never matched Strip's logged frame ($expected), and Strip never detected the mismatch (no frame-clamped line) within ${timeout}s" >&2
   return 1
 }
@@ -166,6 +179,192 @@ scenario_slide() {
   assert_eq "$(parse_slot_app "$block" L)" "$before_l" "slidePrev round-trip -> L" || { ok=1; _fail_dump "$block"; }
   assert_eq "$(parse_slot_app "$block" C)" "$before_c" "slidePrev round-trip -> C" || { ok=1; _fail_dump "$block"; }
   assert_eq "$(parse_slot_app "$block" R)" "$before_r" "slidePrev round-trip -> R" || { ok=1; _fail_dump "$block"; }
+  return "$ok"
+}
+
+# _parked_left_app <block> — prints the full appName of the window parked off the LEFT edge (verbose
+# placement lines: "<ts> <●|·> <name…> slot=PARKED frame=(x,y wxh)", x negative), or nothing.
+_parked_left_app() {
+  grep "slot=PARKED" <<<"$1" | grep -E 'frame=\(-[0-9]+,' | head -1 \
+    | sed -E 's/^[^ ]+ +[●·] +//; s/ +slot=.*//'
+}
+
+# _sample_mid_x <appName> <seconds> — polls the REAL window frame and prints each sample's midX,
+# one per line (ground truth, independent of Strip's log). osascript is slow (~50–150ms/sample), but a
+# spring across the display lasts several hundred ms, so a sweep is reliably sampled mid-flight.
+_sample_mid_x() {
+  local app="$1" n=$(( $2 * 10 )) x y w h
+  for ((i = 0; i < n; i++)); do
+    read -r x y w h <<<"$(real_window_frame "$app")"
+    [ -n "$w" ] && echo $(( x + w / 2 ))
+  done
+}
+
+# Seats & Pile slice 0: a slide must never drag a window across the display. The wrapping ring flips
+# a parked window's edge (monocle: parked-left → parked-right) or un-parks it on the far side of its
+# new seat (2-up: parked-left → R); MotionPolicy.sweepsAcross makes those moves snap. The fixture's 3
+# windows reproduce both. Asserts on the "sweep-snap:" log line AND on the real frame never being
+# sampled crossing the display.
+scenario_no_park_sweep() {
+  local ok=0 cp block app screen_w mid
+  read -r screen_w _ <<<"$(_screen_size)"
+
+  # Monocle: the left-parked window ends parked right — must never be seen on screen.
+  cp=$(checkpoint); send_hotkey cols1; block=$(wait_for_cols 1 "$cp" 3) || { _fail_dump ""; return 1; }
+  app=$(_parked_left_app "$block")
+  if [ -z "$app" ]; then echo "    ✗ monocle: no window parked left" >&2; _fail_dump "$block"; return 1; fi
+  cp=$(checkpoint); send_hotkey slideNext
+  for mid in $(_sample_mid_x "$app" 1); do
+    if [ "$mid" -gt 0 ] && [ "$mid" -lt "$screen_w" ]; then
+      echo "    ✗ monocle: $app seen on screen (midX=$mid) while moving between park edges" >&2; ok=1; break
+    fi
+  done
+  wait_for_line "sweep-snap: $app " "$cp" 3 >/dev/null || { echo "    ✗ monocle: no sweep-snap for $app" >&2; ok=1; }
+
+  # 2-up: the left-parked window lands in R — must never be seen crossing the L seat.
+  cp=$(checkpoint); send_hotkey cols2; block=$(wait_for_cols 2 "$cp" 3) || { _fail_dump ""; return 1; }
+  app=$(_parked_left_app "$block")
+  if [ -z "$app" ]; then echo "    ✗ 2-up: no window parked left" >&2; _fail_dump "$block"; return 1; fi
+  cp=$(checkpoint); send_hotkey slideNext
+  for mid in $(_sample_mid_x "$app" 1); do
+    if [ "$mid" -gt 0 ] && [ "$mid" -lt $(( screen_w * 4 / 10 )) ]; then
+      echo "    ✗ 2-up: $app seen crossing the left seat (midX=$mid) on its way to R" >&2; ok=1; break
+    fi
+  done
+  block=$(wait_for_new_apply "$cp" 3) || { ok=1; }
+  assert_eq "$(parse_slot_app "$block" R)" "${app%% *}" "2-up slideNext -> left-parked window lands in R" || { ok=1; _fail_dump "$block"; }
+  wait_for_line "sweep-snap: $app " "$cp" 3 >/dev/null || { echo "    ✗ 2-up: no sweep-snap for $app" >&2; ok=1; }
+
+  cp=$(checkpoint); send_hotkey cols3; wait_for_cols 3 "$cp" 3 >/dev/null || ok=1
+  return "$ok"
+}
+
+# _slot_app_full <block> <L|C|R> — prints the FULL appName in that slot (verbose placement lines),
+# unlike parse_slot_app's first word — needed to address the app ("Activity Monitor") by name.
+_slot_app_full() {
+  grep -E "slot=$2([[:space:]]|$)" <<<"$1" | head -1 | sed -E 's/^[^ ]+ +[●·] +//; s/ +slot=.*//'
+}
+
+_frontmost_app() {
+  osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null
+}
+
+# Seats & Pile slice 0: focus that arrives from outside Strip (here an AppleScript `activate`, the
+# same activation ⌘Tab/Dock/a click produce) into a visible side window is FOLLOWED — the focused
+# slot moves to it with no window motion, Strip doesn't yank focus back, and J/K continue from it.
+# Before the fix, handleExternalActivation returned early for managed windows: focus stayed on C in
+# Strip's model, so J went C→L instead of R→C.
+scenario_focus_follow() {
+  local ok=0 cp block r_app c_app app before after after_f
+  cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_cols 3 "$cp" 3) || { _fail_dump ""; return 1; }
+  # Put Strip's focus on C: J twice clamps at L, then K once.
+  send_hotkey focusPrev; sleep 0.2; send_hotkey focusPrev; sleep 0.2
+  cp=$(checkpoint); send_hotkey focusNext; block=$(wait_for_new_apply "$cp" 3) || return 1
+  sleep 0.6 # let Strip's own focus hand-off to C land (focusSettleDelay) before activating from outside
+  r_app=$(_slot_app_full "$block" R); c_app=$(_slot_app_full "$block" C)
+  assert_eq "$(parse_focus_app "$block")" "${c_app%% *}" "setup: focus on C" || { _fail_dump "$block"; return 1; }
+
+  cp=$(checkpoint)
+  osascript -e "tell application \"$r_app\" to activate" >/dev/null 2>&1
+  local ffn=""
+  if wait_for_line "focus-follow: $r_app → slot R" "$cp" 3 >/dev/null; then
+    ffn=$(grep -n -F "focus-follow: $r_app → slot R" "$STRIP_E2E_LOG" | tail -1 | cut -d: -f1)
+  else
+    echo "    ✗ no focus-follow to R ($r_app)" >&2; ok=1
+  fi
+  after=""
+  if [ -n "$ffn" ]; then
+    # Compare the focus-follow's own apply with the apply right before it — not the setup block: a
+    # constraint-learning re-apply (another window's learned floor) can land in between.
+    local start
+    start=$(head -n "$ffn" "$STRIP_E2E_LOG" | grep -n "apply:" | tail -1 | cut -d: -f1)
+    block=$(sed -n "${start},$((ffn - 1))p" "$STRIP_E2E_LOG")
+    after=$(wait_for_new_apply "$ffn" 3) || { ok=1; after=""; }
+  fi
+  if [ -n "$after" ]; then
+    assert_eq "$(parse_focus_app "$after")" "${r_app%% *}" "external activation -> focus on R" || { ok=1; _fail_dump "$after"; }
+    for app in "${FIXTURE_APPS[@]}"; do
+      before=$(parse_frame_for_literal_app "$block" "$app"); after_f=$(parse_frame_for_literal_app "$after" "$app")
+      _frames_match "$before" "$after_f" 1 || { echo "    ✗ $app moved on focus-follow: ($before) -> ($after_f)" >&2; ok=1; }
+    done
+  fi
+  sleep 0.8 # longer than focusSettleDelay: Strip must NOT hand focus back to C
+  assert_eq "$(_frontmost_app)" "$r_app" "Strip leaves the externally-focused app frontmost" || ok=1
+
+  cp=$(checkpoint); send_hotkey focusPrev; block=$(wait_for_new_apply "$cp" 3) || return 1
+  assert_eq "$(parse_focus_app "$block")" "${c_app%% *}" "J after focus-follow steps R -> C" || { ok=1; _fail_dump "$block"; }
+  return "$ok"
+}
+
+# Seats & Pile slice 0: a slide schedules a focus hand-off to the new center ~170 ms later
+# (focusSettleDelay). A ⌘ keystroke (here ⌘Tab) or a click inside that gap must cancel it, or Strip
+# activates the slid-to window AFTER the user switched away and steals their focus. A timing race by
+# nature: each attempt sends ⌃⌥L then ⌘Tab D ms apart in one script and retries until Strip logs the
+# cancel (proof the ⌘Tab landed inside the gap). MRU is set to [C app, L app] first, so ⌘Tab's
+# target is the L app; the slid-to window is the R app. Clicks can't be driven here — hand-test those.
+scenario_focus_handoff_cancel() {
+  local ok=0 cp block l_app c_app r_app d hit=""
+  cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_cols 3 "$cp" 3) || { _fail_dump ""; return 1; }
+  l_app=$(_slot_app_full "$block" L); c_app=$(_slot_app_full "$block" C); r_app=$(_slot_app_full "$block" R)
+  for d in 0.05 0.03 0.08 0.1 0.04; do
+    osascript -e "tell application \"$l_app\" to activate" >/dev/null 2>&1; sleep 0.4
+    osascript -e "tell application \"$c_app\" to activate" >/dev/null 2>&1; sleep 0.6
+    cp=$(checkpoint)
+    osascript -e "tell application \"System Events\"
+        key code 37 using {control down, option down}
+        delay $d
+        key code 48 using {command down}
+      end tell" >/dev/null 2>&1
+    if wait_for_line "focus hand-off cancelled ← ⌘ key" "$cp" 1 >/dev/null 2>&1; then hit=1; break; fi
+    # Missed the gap (Strip already handed focus off): undo the slide and try a different spacing.
+    send_hotkey slidePrev; sleep 0.8
+  done
+  if [ -z "$hit" ]; then
+    echo "    ✗ the focus hand-off was never cancelled by ⌘Tab (5 attempts)" >&2
+    echo "    frontmost now: $(_frontmost_app) (slid-to window: $r_app)" >&2
+    return 1
+  fi
+  sleep 1 # well past focusSettleDelay: a stale hand-off would have activated $r_app by now
+  assert_eq "$(_frontmost_app)" "$l_app" "⌘Tab target stays frontmost (not the slid-to $r_app)" || ok=1
+  wait_for_line "focus-follow: $l_app → slot" "$cp" 2 >/dev/null \
+    || { echo "    ✗ Strip didn't follow focus to the ⌘Tab target ($l_app)" >&2; ok=1; }
+  return "$ok"
+}
+
+# Seats & Pile slice 0: focus arriving in a PARKED window. User-caused (⌘Tab here; a Dock or
+# notification click in real use) → the window is swapped into the anchor slot (a two-entry ring
+# swap, both snapped). Not user-caused (an AppleScript `activate`, an app activating itself) → nothing
+# moves. Before the fix, ⌘Tab to a parked window left it off-screen while its app took the keyboard.
+scenario_summon_parked() {
+  local ok=0 cp block p_app a_app b_app line
+  cp=$(checkpoint); send_hotkey cols2; block=$(wait_for_cols 2 "$cp" 3) || { _fail_dump ""; return 1; }
+  p_app=$(grep "slot=PARKED" <<<"$block" | head -1 | sed -E 's/^[^ ]+ +[●·] +//; s/ +slot=.*//')
+  a_app=$(_slot_app_full "$block" L); b_app=$(_slot_app_full "$block" R)
+  [ -n "$p_app" ] || { echo "    ✗ 2-up: no parked window" >&2; _fail_dump "$block"; return 1; }
+
+  # Not user-caused: no click or ⌘ key in the last second.
+  sleep 1.2
+  cp=$(checkpoint); osascript -e "tell application \"$p_app\" to activate" >/dev/null 2>&1
+  wait_for_line "parked-focus: $p_app focused without user input — left parked" "$cp" 3 >/dev/null \
+    || { echo "    ✗ app-caused focus into parked $p_app: no 'left parked' line" >&2; ok=1; }
+  if log_has_since "$cp" "summon: $p_app" 1; then echo "    ✗ app-caused focus summoned $p_app" >&2; ok=1; fi
+
+  # User-caused: MRU [A, P], then ⌘Tab → P.
+  osascript -e "tell application \"$a_app\" to activate" >/dev/null 2>&1; sleep 0.6
+  cp=$(checkpoint); send_key tab "command down"
+  line=$(wait_for_line "summon: $p_app → center" "$cp" 3) \
+    || { echo "    ✗ ⌘Tab to parked $p_app: not summoned" >&2; return 1; }
+  assert_eq "$line" "${line%%summon*}summon: $p_app → center (swapped with $a_app)" "summon swaps with the anchor" || ok=1
+  block=$(wait_for_new_apply "$cp" 3) || return 1
+  assert_eq "$(parse_slot_app "$block" L)" "${p_app%% *}" "summoned window in the anchor slot (L)" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" R)" "${b_app%% *}" "R unchanged" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" PARKED)" "${a_app%% *}" "old anchor parked" || { ok=1; _fail_dump "$block"; }
+  local expected
+  expected=$(parse_frame_for_literal_app "$block" "$p_app") && _assert_real_frame "$p_app" "$expected" "$cp" 3 || ok=1
+  sleep 0.6
+  assert_eq "$(_frontmost_app)" "$p_app" "summoned app stays frontmost" || ok=1
+
+  cp=$(checkpoint); send_hotkey cols3; wait_for_cols 3 "$cp" 3 >/dev/null || ok=1
   return "$ok"
 }
 

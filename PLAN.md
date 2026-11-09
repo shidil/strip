@@ -19,7 +19,8 @@ Its `geom()`/`resolve()`/`computeVM()` concepts were ported into the tested Swif
 Strip runs all day and you forget it's there. Windows auto-arrange as you open/close them and
 launch/quit apps; junk windows (dialogs, palettes, panels) stay out of the strip; nothing ever gets
 stranded off-screen; it survives quit/crash/restart. Target setup: a **single ultrawide** (BenQ
-EX3415R, 3440×1440). Multi-display and macOS Spaces are deliberately **deferred** (see *Deferred*).
+EX3415R, 3440×1440). Unrelated work is separated with **macOS native Spaces** (Strip keeps one
+table per Space — M8 slice 5); multi-display is deliberately **deferred** (see *Deferred*).
 
 ## Decisions (locked)
 
@@ -298,29 +299,36 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, O
         Size-quantizing apps (terminals — `SteppingApps`, pure + tested) snap rather than spring.
       - **Known residual (not a Strip defect):** heavyweight apps (e.g. cmux) beachball/step while
         *you* drag their native resize handle — their own AX-resize slowness. Per-app handling → M9.
-- [ ] **M8 — Workspaces (multiple strips).** ← **NEXT.** The niri model is *several* strips — the real
-      organizing tool on one big display.
-      - N independent `StripState`s; switch with a hotkey; carry-focused-window-to-workspace.
-      - Inactive workspaces' windows parked off-screen (parking mechanism already exists).
-      - Per-workspace center / pins / layout.
-      - Likely a `WorkspaceManager` owning N states, or a workspace dimension on `StripController`.
-      - **Open question:** ⌃⌥1–3 are layout switches today; pick a non-conflicting binding
-        (⌃⌥←/→? ⌃⌥⇧1–9?).
+- [ ] **M8 — Seats & Pile.** ← **NEXT.** Replaces the wrapping film with fixed **seats** + one MRU
+      **pile**: draw any window into any seat (a cut, 2 windows), the window you commit to (committed
+      click, ⌘Tab, Dock, pick) trades into the center, slide survives as a bounded reversible *pass*.
+      Spec, interaction table, motion budgets, experiments and build order:
+      **`docs/design/seats-and-pile.md`** (accepted 2026-11-06). Owner decisions: click-to-center ON by
+      default; a displaced center returns where its replacement came from (pile → pile, seat → trade);
+      satellite draws are instant cuts; read-only private CGS Space id OK (ADR-0005).
+      - [x] Slice 0 — fixes on today's ring ✅ 2026-11-06 (`seats-and-pile-slice0`): sweeping moves
+        snap (`MotionPolicy`); focus follows external activation with 0 motion (`focusFollow`); a
+        click or ⌘ key cancels a pending focus hand-off; a user-caused activation of a parked window
+        swaps it into C (`summon`, attribution = click/⌘ key within 1 s). e2e: 28/28.
+      - Slice 1 — promote + draw on the ring (⌃⌥U/I/O/↩, committed-click `PromotePolicy`, `mru`).
+      - Slice 2 — new pure `StripCore` target: `Table`, reducer `reduce(state, event, now)`, typed
+        events, ordered `MovePlan`/`transitions()`, replay harness (ADR-0006: evolve in place, no new project).
+      - Slice 3 — `StripController` → thin executor; animator phase barriers; two-phase `.cut`; new/close/hole policy.
+      - Slice 4 — hand panel (flagsChanged), bury/put-away, Cut/Deal presets.
+      - Slice 5 — **Spaces-aware**: one `Table` per Space, freeze-not-drop, suspend in fullscreen
+        Spaces / Stage Manager. Auto-promote behaviors must not default on before this lands.
+      - Slice 6 — chrome: TABLE | PILE rail, amber off-center ring, Overview spread, help, menu.
+      - *Superseded direction:* Strip workspaces / tmux-style sessions (`origin/multiplex-sessions-spike`,
+        its proposed ADR-0005) — native macOS Spaces separate unrelated work instead.
 - [ ] **M9 — Lives in the system.**
       - **Launch at login** — `SMAppService.mainApp`; menu toggle.
       - **Config file** — `~/.config/strip/` (TOML/JSON): hotkeys (today hardcoded in `HotkeyService`),
         spring presets, ignore denylist, default layout, workspace count.
       - **Settings persistence** — remember cols/emphasis/spring/layout across restart. (Persist
         *settings*, not exact window placement — `CGWindowID` isn't stable across restart.)
-- [ ] **M10 — 2-D film (vertical columns).** Each horizontal slot becomes a niri-style *column* — a
-      vertical sub-strip of windows you slide on the **y-axis** — with both axes live at the same time
-      in **one** workspace. (Distinct from M8: switching M8 workspaces changes *everything*; here the
-      x-strip stays and you slide windows up/down within a slot.) Turns the 1-D ring into a 2-D grid.
-      - Pure model: `StripState` ring → 2-D (each slot holds a column of windows).
-      - Layout: `SlotGeometry` gains per-column **y-distribution** (it distributes width across X only today).
-      - Nav: add vertical keys (up/down within a column) alongside J/K.
-      - Minimap: render columns, not a flat row.
-      - Feasible on AX-only (still just move/resize of our own windows); **L** effort.
+- ~~**M10 — 2-D film (vertical columns).**~~ Dropped 2026-11-06, folded into M8: the "vertical
+      strip" is seat-addressed drawing from the one pile, and "rows" are macOS Spaces. See
+      `docs/design/seats-and-pile.md`.
 
 ## Backlog — triaged ideas (from `IDEAS.md`, triaged 2026-06-30)
 
@@ -621,8 +629,9 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
 ## Deferred (revisit only if the setup changes)
 
 - **Multi-display** — per-display strips, window-follows-active-display. Parked because: single ultrawide.
-- **macOS Spaces + fullscreen apps** — windows on other Spaces aren't AX-enumerable without focusing
-  them; large effort, low value for the current single-Space-per-display workflow.
+- **Moving windows between Spaces / managing fullscreen apps** — windows on other Spaces aren't
+  AX-enumerable without focusing them. (Being *Spaces-aware* — one table per Space — is no longer
+  deferred: M8 slice 5.)
 
 ## Open bugs
 

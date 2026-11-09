@@ -226,6 +226,36 @@ public struct StripState {
         clampToValidSlots()
     }
 
+    /// Follow focus that arrived from outside Strip (a click, ⌘Tab, Dock) into window `id`: put
+    /// `focusSlot` on the visible slot showing it. Moves nothing — the film and the center stay — so
+    /// J/K continue from the window you're actually in. Returns the slot followed to, or nil when
+    /// `id` isn't showing in a slot (parked, or not in the ring). Pure → unit-testable.
+    @discardableResult
+    public mutating func focusFollow(_ id: CGWindowID) -> Slot? {
+        guard let slot = StripLayout(self).assignment().first(where: { $0.value == id })?.key else { return nil }
+        focusSlot = slot
+        return slot
+    }
+
+    /// Bring parked window `id` into the anchor (center) slot by swapping it with the window shown
+    /// there — a two-entry ring swap, so every other window keeps its slot and only these two move
+    /// (Seats & Pile slice 0: a summoned parked window is drawn into C; the old center takes its
+    /// place in the film, parked). Focus goes to the anchor. Returns the displaced center's id, or nil
+    /// (no-op) when `id` isn't in the ring, is pinned, or is already showing in a slot.
+    @discardableResult
+    public mutating func summon(_ id: CGWindowID) -> CGWindowID? {
+        let r = StripLayout(self).resolve()
+        guard r.unpinned.contains(id), !r.assign.values.contains(id),
+              let anchor = r.unpinnedSlots.indices.contains(r.anchorIdx) ? r.unpinnedSlots[r.anchorIdx] : nil,
+              let old = r.assign[anchor],
+              let i = ring.firstIndex(of: id), let j = ring.firstIndex(of: old) else { return nil }
+        ring.swapAt(i, j)
+        centerId = id
+        focusSlot = anchor
+        clampToValidSlots()
+        return old
+    }
+
     /// The slot focus lands on after moving `dir` (+1 right / −1 left) across the *occupied* slots —
     /// pinned slots included, so a pinned window is reachable. Clamps at the ends (no wrap), matching
     /// the existing focus-edge behavior. Pure, so J/K navigation is unit-testable without AppKit/AX.

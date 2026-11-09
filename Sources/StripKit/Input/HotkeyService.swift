@@ -56,6 +56,9 @@ public final class HotkeyService {
     /// an OS auto-repeat (key held down) rather than a fresh press — so navigation can pace a held key
     /// instead of advancing at the full repeat rate.
     public var onCommand: ((_ command: HotkeyCommand, _ repeated: Bool) -> Void)?
+    /// Fired (on main) for every keyDown carrying ⌘ — user intent aimed at another window (⌘Tab, ⌘`,
+    /// app shortcuts). The controller cancels a pending focus hand-off on it (Seats & Pile slice 0).
+    public var onUserCommandKey: (() -> Void)?
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -291,6 +294,11 @@ private func hotkeyTapCallback(
         Signpost.log.emitEvent("tapDisabled")
         service.reEnable()
         return Unmanaged.passUnretained(event)
+    }
+    // Any ⌘ keystroke is the user acting in (or switching to) another window — ⌘Tab, ⌘`, a shortcut.
+    // Reported before command matching so it fires whether or not Strip consumes the key.
+    if type == .keyDown, event.flags.contains(.maskCommand) {
+        DispatchQueue.main.async { service.onUserCommandKey?() }
     }
     guard type == .keyDown, let command = service.command(for: event) else {
         return Unmanaged.passUnretained(event)

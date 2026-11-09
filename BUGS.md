@@ -21,6 +21,17 @@
   empty rail snapshot, clear `animator.focusedID`, and emit `onFocusFrame(nil)` (or hide the
   overlay entirely) — before skipping the placement/animation work.
 
+- Parked windows are not fully off-screen: macOS keeps a 40 px sliver of each one on the display
+  edge. Observed 2026-11-06 in the e2e VM (macOS 26.6, 3440-wide display): every park write at
+  x=3480 lands at x=3400, and every park at x=-2094 (2054 wide) lands at x=-2014, so 40 px of
+  each parked window shows at the right or left edge. Strip detects it (`frame-clamped:` lines
+  with a negative or beyond-the-edge `requested` x) but learns nothing, because it is a position
+  clamp, not a size one. It happens on plain spring parks too, so it predates the slice-0
+  sweep-snap. Unverified on the host (macOS 27): check the screen edges with 4+ windows in 3-up.
+  Matters for Seats & Pile, where every pile card is parked. Options to evaluate: park in a
+  corner behind the Dock or menu bar, or accept the sliver and draw Strip's own edge chrome over
+  it.
+
 ## Fixed
 
 - macOS native apps' real window size disagrees with Strip's layout: Console, Music, Photos
