@@ -169,7 +169,7 @@ public extension Table {
     @discardableResult
     mutating func pass(_ dir: Int) -> Bool {
         guard dir != 0 else { return false }
-        let movable = slots.filter { !locks.contains($0) && holes[$0] == nil && seats[$0] != nil }
+        let movable = passableSeats
         guard !movable.isEmpty else { return false }
         var row = movable.compactMap { seats[$0] }
         if let incoming = pile.first {
@@ -185,6 +185,11 @@ public extension Table {
         lastTrade = nil
         normalize()
         return true
+    }
+
+    /// The seats a pass moves, left to right: occupied, unlocked, without a hole.
+    var passableSeats: [Slot] {
+        slots.filter { !locks.contains($0) && holes[$0] == nil && seats[$0] != nil }
     }
 
     // MARK: - Columns (⌃⌥1 / 2 / 3)
