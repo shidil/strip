@@ -390,26 +390,151 @@ scenario_focus_move() {
   return "$ok"
 }
 
-# Carries the FOCUSED window (⌃⌥⇧H/L), not necessarily the centered one — the behavior fixed by
-# StripState.moveFocused swaps the focused window with its neighboring slot. Resets focus to L first (2x
-# focusPrev clamps there, no wrap) for a deterministic, non-edge starting slot.
-scenario_move_focused_swap() {
-  local ok=0 cp block l_app c_app focus_app
-  cp=$(checkpoint); send_hotkey cols3; block=$(wait_for_new_apply "$cp" 3) || return 1
+# _parked_app_full <block> — prints the FULL appName of the first parked window, or nothing.
+_parked_app_full() {
+  grep "slot=PARKED" <<<"$1" | head -1 | sed -E 's/^[^ ]+ +[●·] +//; s/ +slot=.*//'
+}
+
+# _focus_center — J twice clamps focus at L, then K puts it on C; prints the K apply block. Waits out
+# Strip's focus hand-off (focusSettleDelay) so a following `activate` isn't overridden by it.
+_focus_center() {
+  local cp block
+  send_hotkey focusPrev; sleep 0.2; send_hotkey focusPrev; sleep 0.2
+  cp=$(checkpoint); send_hotkey focusNext; block=$(wait_for_new_apply "$cp" 3) || return 1
+  sleep 0.6
+  printf '%s\n' "$block"
+}
+
+# Seats & Pile slice 1: ⌃⌥U/I/O draw pile[0] into a seat as a cut. Only the two windows move, the
+# displaced one tops the pile so drawing again toggles back, and a satellite draw activates nothing.
+# 2-up (one parked window) covers a satellite draw; monocle covers ⌃⌥I toggling the center.
+scenario_draw() {
+  local ok=0 cp block l_app r_app p_app c_app line front expected
+  cp=$(checkpoint); send_hotkey cols2; block=$(wait_for_cols 2 "$cp" 3) || { _fail_dump ""; return 1; }
   send_hotkey focusPrev; sleep 0.2
   cp=$(checkpoint); send_hotkey focusPrev; block=$(wait_for_new_apply "$cp" 3) || return 1
-  assert_eq "$(parse_slot_app "$block" L)" "$(parse_focus_app "$block")" "reset -> focus on L" || { ok=1; _fail_dump "$block"; return 1; }
-  l_app=$(parse_slot_app "$block" L); c_app=$(parse_slot_app "$block" C)
+  sleep 0.6 # let Strip's focus hand-off to L land
+  l_app=$(_slot_app_full "$block" L); r_app=$(_slot_app_full "$block" R); p_app=$(_parked_app_full "$block")
+  [ -n "$p_app" ] || { echo "    ✗ 2-up: no parked window" >&2; _fail_dump "$block"; return 1; }
+  front=$(_frontmost_app)
 
-  cp=$(checkpoint); send_hotkey moveNext; block=$(wait_for_new_apply "$cp" 3) || return 1
-  assert_eq "$(parse_slot_app "$block" C)" "$l_app" "moveNext -> L's window carried to C" || { ok=1; _fail_dump "$block"; }
-  assert_eq "$(parse_focus_app "$block")" "$l_app" "moveNext -> focus rides the moved window" || { ok=1; _fail_dump "$block"; }
-  assert_eq "$(parse_slot_app "$block" L)" "$c_app" "moveNext -> displaced C's window to L" || { ok=1; _fail_dump "$block"; }
+  cp=$(checkpoint); send_hotkey drawR
+  line=$(wait_for_line "draw: " "$cp" 3) || return 1
+  assert_eq "$line" "${line%%draw:*}draw: $p_app → R ($r_app to the pile)" "⌃⌥O draws pile[0] into R" || ok=1
+  block=$(wait_for_new_apply "$cp" 3) || return 1
+  assert_eq "$(parse_slot_app "$block" R)" "${p_app%% *}" "drawn window in R" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" L)" "${l_app%% *}" "L unchanged" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" PARKED)" "${r_app%% *}" "old R to the pile" || { ok=1; _fail_dump "$block"; }
+  expected=$(parse_frame_for_literal_app "$block" "$p_app") && _assert_real_frame "$p_app" "$expected" "$cp" 3 || ok=1
+  sleep 0.6
+  assert_eq "$(_frontmost_app)" "$front" "a satellite draw activates nothing" || ok=1
 
-  cp=$(checkpoint); send_hotkey movePrev; block=$(wait_for_new_apply "$cp" 3) || return 1
-  assert_eq "$(parse_slot_app "$block" L)" "$l_app" "movePrev round-trip -> L" || { ok=1; _fail_dump "$block"; }
-  assert_eq "$(parse_slot_app "$block" C)" "$c_app" "movePrev round-trip -> C" || { ok=1; _fail_dump "$block"; }
-  assert_eq "$(parse_focus_app "$block")" "$l_app" "movePrev round-trip -> focus still on carried window" || { ok=1; _fail_dump "$block"; }
+  cp=$(checkpoint); send_hotkey drawR
+  line=$(wait_for_line "draw: " "$cp" 3) || return 1
+  assert_eq "$line" "${line%%draw:*}draw: $r_app → R ($p_app to the pile)" "⌃⌥O again toggles back" || ok=1
+
+  # Monocle: ⌃⌥I flips between the two most recent windows.
+  cp=$(checkpoint); send_hotkey cols1; block=$(wait_for_cols 1 "$cp" 3) || { _fail_dump ""; return 1; }
+  c_app=$(_slot_app_full "$block" C)
+  cp=$(checkpoint); send_hotkey drawC
+  line=$(wait_for_line "draw: " "$cp" 3) || return 1
+  p_app=$(sed -E 's/.*draw: (.*) → C .*/\1/' <<<"$line")
+  assert_eq "$line" "${line%%draw:*}draw: $p_app → C ($c_app to the pile)" "monocle ⌃⌥I draws into C" || ok=1
+  sleep 0.6
+  assert_eq "$(_frontmost_app)" "$p_app" "a draw into the center focuses it" || ok=1
+  cp=$(checkpoint); send_hotkey drawC
+  line=$(wait_for_line "draw: " "$cp" 3) || return 1
+  assert_eq "$line" "${line%%draw:*}draw: $c_app → C ($p_app to the pile)" "⌃⌥I again flips back" || ok=1
+
+  cp=$(checkpoint); send_hotkey cols3; wait_for_cols 3 "$cp" 3 >/dev/null || ok=1
+  return "$ok"
+}
+
+# Seats & Pile slice 1: ⌃⌥⇧U/I/O trade the focused window with a named seat (focus goes with it;
+# L↔R is a cut, neighbors spring), and ⌃⌥↩ promotes the focused satellite into C, or on C undoes the
+# last trade. Replaces the retired ⌃⌥⇧H/L exchange-with-neighbor.
+scenario_trade_promote() {
+  local ok=0 cp block l_app c_app r_app line expected
+  cp=$(checkpoint); send_hotkey cols3; wait_for_cols 3 "$cp" 3 >/dev/null || return 1
+  block=$(_focus_center) || return 1
+  l_app=$(_slot_app_full "$block" L); c_app=$(_slot_app_full "$block" C); r_app=$(_slot_app_full "$block" R)
+  assert_eq "$(parse_focus_app "$block")" "${c_app%% *}" "setup: focus on C" || { _fail_dump "$block"; return 1; }
+
+  cp=$(checkpoint); send_hotkey tradeR
+  line=$(wait_for_line "trade: " "$cp" 3) || return 1
+  assert_eq "$line" "${line%%trade:*}trade: $c_app C → R, $r_app R → C (spring) ← ⌃⌥⇧O" "⌃⌥⇧O trades C with R" || ok=1
+  block=$(wait_for_new_apply "$cp" 3) || return 1
+  assert_eq "$(parse_slot_app "$block" C)" "${r_app%% *}" "⌃⌥⇧O -> C" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" R)" "${c_app%% *}" "⌃⌥⇧O -> R" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_focus_app "$block")" "${c_app%% *}" "focus goes with the traded window" || { ok=1; _fail_dump "$block"; }
+
+  cp=$(checkpoint); send_hotkey tradeL
+  line=$(wait_for_line "trade: " "$cp" 3) || return 1
+  assert_eq "$line" "${line%%trade:*}trade: $c_app R → L, $l_app L → R (cut) ← ⌃⌥⇧U" "⌃⌥⇧U trades R with L as a cut" || ok=1
+  block=$(wait_for_new_apply "$cp" 3) || return 1
+  assert_eq "$(parse_slot_app "$block" L)" "${c_app%% *}" "⌃⌥⇧U -> L" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" R)" "${l_app%% *}" "⌃⌥⇧U -> R" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" C)" "${r_app%% *}" "⌃⌥⇧U leaves C alone" || { ok=1; _fail_dump "$block"; }
+  expected=$(parse_frame_for_literal_app "$block" "$c_app") && _assert_real_frame "$c_app" "$expected" "$cp" 3 || ok=1
+
+  cp=$(checkpoint); send_hotkey promote
+  line=$(wait_for_line "promote: " "$cp" 3) || return 1
+  assert_eq "$line" "${line%%promote:*}promote: $c_app L → C, $r_app C → L (spring) ← ⌃⌥↩" "⌃⌥↩ promotes L into C" || ok=1
+  block=$(wait_for_new_apply "$cp" 3) || return 1
+  assert_eq "$(parse_slot_app "$block" C)" "${c_app%% *}" "promoted into C" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_focus_app "$block")" "${c_app%% *}" "focus goes with the promoted window" || { ok=1; _fail_dump "$block"; }
+
+  cp=$(checkpoint); send_hotkey promote
+  line=$(wait_for_line "promote-undo: " "$cp" 3) || return 1
+  block=$(wait_for_new_apply "$cp" 3) || return 1
+  assert_eq "$(parse_slot_app "$block" C)" "${r_app%% *}" "⌃⌥↩ on C undoes the promote" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_slot_app "$block" L)" "${c_app%% *}" "undo -> L" || { ok=1; _fail_dump "$block"; }
+  assert_eq "$(parse_focus_app "$block")" "${r_app%% *}" "undo keeps focus on C" || { ok=1; _fail_dump "$block"; }
+
+  cp=$(checkpoint); send_hotkey retiredMoveNext
+  if log_has_since "$cp" "apply:" 1; then echo "    ✗ the retired ⌃⌥⇧L still moved windows" >&2; ok=1; fi
+  return "$ok"
+}
+
+# Seats & Pile slice 1: ⌘Tab into a visible satellite promotes it into C after a short settle — only
+# with "Center on click or ⌘Tab" on (off by default until Spaces support), and only when a ⌘ key
+# caused it. Committed clicks share the setting but can't be driven here; hand-test those.
+scenario_cmd_tab_promote() {
+  local ok=0 cp block c_app r_app line
+  cp=$(checkpoint); send_hotkey cols3; wait_for_cols 3 "$cp" 3 >/dev/null || return 1
+  block=$(_focus_center) || return 1
+  c_app=$(_slot_app_full "$block" C); r_app=$(_slot_app_full "$block" R)
+
+  # Setting off (the default): ⌘Tab into R only follows focus.
+  osascript -e "tell application \"$r_app\" to activate" >/dev/null 2>&1; sleep 0.6
+  osascript -e "tell application \"$c_app\" to activate" >/dev/null 2>&1; sleep 0.6
+  cp=$(checkpoint); send_key tab "command down"
+  wait_for_line "focus-follow: $r_app → slot R" "$cp" 3 >/dev/null || { echo "    ✗ setting off: no focus-follow to $r_app" >&2; ok=1; }
+  if log_has_since "$cp" "promote: " 1; then echo "    ✗ setting off: ⌘Tab promoted $r_app" >&2; ok=1; fi
+
+  cp=$(checkpoint); click_menu "Center on click or ⌘Tab"
+  wait_for_line "click-to-center: on" "$cp" 3 >/dev/null || { echo "    ✗ the menu didn't turn click-to-center on" >&2; return 1; }
+
+  sleep 1.2 # no recent user input: the next activation is app-caused
+  osascript -e "tell application \"$c_app\" to activate" >/dev/null 2>&1; sleep 0.6
+  cp=$(checkpoint); send_key tab "command down"
+  line=$(wait_for_line "promote: " "$cp" 3) || { echo "    ✗ setting on: ⌘Tab into R didn't promote $r_app" >&2; ok=1; }
+  if [ -n "$line" ]; then
+    assert_eq "$line" "${line%%promote:*}promote: $r_app R → C, $c_app C → R (spring) ← ⌘ key" "⌘Tab promotes R into C" || ok=1
+    block=$(wait_for_new_apply "$(( $(grep -n -F "$line" "$STRIP_E2E_LOG" | tail -1 | cut -d: -f1) - 1 ))" 3) || ok=1
+    assert_eq "$(parse_slot_app "$block" C)" "${r_app%% *}" "promoted into C" || { ok=1; _fail_dump "$block"; }
+    sleep 0.6
+    assert_eq "$(_frontmost_app)" "$r_app" "the promoted app stays frontmost" || ok=1
+  fi
+
+  # An app activating itself into a satellite never promotes, even with the setting on.
+  sleep 1.2
+  cp=$(checkpoint); osascript -e "tell application \"$c_app\" to activate" >/dev/null 2>&1
+  wait_for_line "focus-follow: $c_app → slot R" "$cp" 3 >/dev/null || { echo "    ✗ no focus-follow to $c_app in R" >&2; ok=1; }
+  if log_has_since "$cp" "promote: " 1; then echo "    ✗ app-caused focus promoted $c_app" >&2; ok=1; fi
+
+  cp=$(checkpoint); click_menu "Center on click or ⌘Tab"
+  wait_for_line "click-to-center: off" "$cp" 3 >/dev/null || { echo "    ✗ the menu didn't turn click-to-center off" >&2; ok=1; }
   return "$ok"
 }
 

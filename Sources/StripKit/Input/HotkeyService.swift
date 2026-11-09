@@ -6,7 +6,9 @@ import CoreGraphics
 public enum HotkeyCommand {
     case slidePrev, slideNext          // h / l
     case focusPrev, focusNext          // j / k, Tab / ⇧Tab
-    case movePrev, moveNext            // ⇧H / ⇧L
+    case draw(SeatKey)                 // u / i / o   draw pile[0] into the left / center / right seat
+    case trade(SeatKey)                // ⇧U / ⇧I / ⇧O trade the focused window with that seat
+    case promote                       // ↩   focused satellite → center; on the center, undo the last trade
     case cols(Int)                     // 1 / 2 / 3
     case toggleEmphasis                // e
     case cycleTransition               // t
@@ -158,8 +160,12 @@ public final class HotkeyService {
     /// The strip command for a ⌃⌥ + `keyCode` chord, or nil.
     private func chordCommand(keyCode: Int, shift: Bool) -> HotkeyCommand? {
         switch keyCode {
-        case kVK_ANSI_H: return shift ? .movePrev : .slidePrev
-        case kVK_ANSI_L: return shift ? .moveNext : .slideNext
+        case kVK_ANSI_H: return shift ? nil : .slidePrev // ⌃⌥⇧H/L retired (Seats & Pile slice 1)
+        case kVK_ANSI_L: return shift ? nil : .slideNext
+        case kVK_ANSI_U: return shift ? .trade(.u) : .draw(.u)
+        case kVK_ANSI_I: return shift ? .trade(.i) : .draw(.i)
+        case kVK_ANSI_O: return shift ? .trade(.o) : .draw(.o)
+        case kVK_Return: return .promote
         case kVK_ANSI_J: return .focusPrev
         case kVK_ANSI_K: return .focusNext
         case kVK_Tab:    return shift ? .focusPrev : .focusNext
@@ -329,6 +335,8 @@ private let kVK_ANSI_P = 0x23
 private let kVK_ANSI_F = 0x03
 private let kVK_ANSI_N = 0x2D
 private let kVK_ANSI_U = 0x20
+private let kVK_ANSI_I = 0x22
+private let kVK_ANSI_O = 0x1F
 private let kVK_ANSI_V = 0x09
 private let kVK_ANSI_W = 0x0D
 private let kVK_Delete = 0x33

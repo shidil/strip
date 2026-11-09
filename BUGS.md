@@ -32,6 +32,14 @@
   corner behind the Dock or menu bar, or accept the sliver and draw Strip's own edge chrome over
   it.
 
+- An app activation that lands while Strip's own focus hand-off is pending loses to the hand-off,
+  and Strip's model can then disagree with the OS. Observed 2026-11-06 in the e2e VM: ⌃⌥K started
+  a 170 ms hand-off to Console; an AppleScript `activate Activity Monitor` landed inside it; the
+  hand-off made Console frontmost again, yet Strip logged `focus-follow: Activity Monitor` (the
+  observer reads the activated app's focused window, not the frontmost app's). Only app-caused
+  activations hit this: a click or ⌘ key cancels the hand-off (slice 0). Predates Seats & Pile
+  slice 1; the e2e helper `_focus_center` waits out the hand-off to avoid it.
+
 ## Fixed
 
 - macOS native apps' real window size disagrees with Strip's layout: Console, Music, Photos

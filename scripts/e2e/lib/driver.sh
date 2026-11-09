@@ -19,8 +19,14 @@ send_hotkey() {
     slidePrev) code=4; mods="control down, option down" ;;
     focusNext) code=40; mods="control down, option down" ;;
     focusPrev) code=38; mods="control down, option down" ;;
-    moveNext) code=37; mods="control down, option down, shift down" ;;
-    movePrev) code=4; mods="control down, option down, shift down" ;;
+    drawL) code=32; mods="control down, option down" ;;
+    drawC) code=34; mods="control down, option down" ;;
+    drawR) code=31; mods="control down, option down" ;;
+    tradeL) code=32; mods="control down, option down, shift down" ;;
+    tradeC) code=34; mods="control down, option down, shift down" ;;
+    tradeR) code=31; mods="control down, option down, shift down" ;;
+    promote) code=36; mods="control down, option down" ;;
+    retiredMoveNext) code=37; mods="control down, option down, shift down" ;;
     togglePin) code=35; mods="control down, option down" ;;
     releaseAll) code=29; mods="control down, option down" ;;
     focusWider) code=24; mods="control down, option down" ;;

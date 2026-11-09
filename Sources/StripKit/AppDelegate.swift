@@ -58,13 +58,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Seats & Pile slice 0: the user's own click or ⌘ keystroke beats a still-pending focus hand-off.
         observer.onUserMouseDown = { [weak self] in
-            self?.controller.noteUserInput()
+            self?.controller.noteUserInput(.mouse)
             self?.controller.cancelPendingFocus("mouseDown")
         }
         hotkeys.onUserCommandKey = { [weak self] in
-            self?.controller.noteUserInput()
+            self?.controller.noteUserInput(.commandKey)
             self?.controller.cancelPendingFocus("⌘ key")
         }
+        // Seats & Pile slice 1: click-to-center (off by default until Spaces support, slice 5).
+        observer.commitsClicks = controller.clickToCenter
+        controller.onClickToCenterChanged = { [weak self] on in self?.observer.commitsClicks = on }
+        observer.onCommittedClick = { [weak self] point in self?.controller.handleCommittedClick(at: point) }
         controller.systemFocus = { [weak self] in self?.observer.frontmostFocus() }
         observer.start()
         rebuildMenu()
@@ -86,15 +90,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // so you can pop up help/Overview without un-suspending.
         switch command {
         case .toggleHelp, .toggleOverview, .overview, .toggleSearch, .beginSearch, .search, .dismissOverview: break
-        default: controller.resumeIfSuspended()
+        default:
+            controller.resumeIfSuspended()
+            // An explicit command means a click still waiting to commit, or a pending ⌘Tab promote,
+            // wasn't what the user meant.
+            observer.cancelPendingClick()
+            controller.cancelPendingPromote()
         }
         switch command {
         case .slidePrev: controller.rotate(-1, repeated: repeated)
         case .slideNext: controller.rotate(1, repeated: repeated)
         case .focusPrev: controller.focusMove(-1, repeated: repeated)
         case .focusNext: controller.focusMove(1, repeated: repeated)
-        case .movePrev: controller.moveFocused(-1)
-        case .moveNext: controller.moveFocused(1)
+        case .draw(let key): controller.draw(key)
+        case .trade(let key): controller.trade(key)
+        case .promote: controller.promote()
         case .cols(let n): controller.setCols(n)
         case .toggleEmphasis: controller.toggleEmphasis()
         case .cycleTransition: controller.cycleSpring()
@@ -182,6 +192,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         let ring = add(menu, "Show focus ring", #selector(toggleFocusRing), "")
         ring.state = controller.focusRingEnabled ? .on : .off
+        let center = add(menu, "Center on click or ⌘Tab", #selector(toggleClickToCenter), "")
+        center.state = controller.clickToCenter ? .on : .off
 
         menu.addItem(.separator())
         add(menu, "Overview", #selector(toggleOverview), "")
@@ -220,6 +232,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func toggleRelease() { controller.releaseAll(); rebuildMenu() }
     @objc private func toggleFocusRing() { controller.setFocusRing(!controller.focusRingEnabled); rebuildMenu() }
+    @objc private func toggleClickToCenter() { controller.setClickToCenter(!controller.clickToCenter); rebuildMenu() }
     @objc private func toggleOverview() { overlay.toggleOverview() }
     @objc private func toggleSearch() { overlay.toggleSearch(via: "menu") }
     @objc private func toggleHelp() { overlay.toggleHelp() }

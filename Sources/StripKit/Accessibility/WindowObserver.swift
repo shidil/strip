@@ -44,6 +44,19 @@ public final class WindowObserver {
     /// Fired on every global left mouseDown (a click in another app's window — not Strip's own
     /// panels, which are local events). The controller cancels a pending focus hand-off on it.
     public var onUserMouseDown: (() -> Void)?
+    /// Fired (main thread) with the mouseDown point (Quartz global) of a **committed click** — see
+    /// `ClickCommitTracker`. Only while `commitsClicks` is on.
+    public var onCommittedClick: ((CGPoint) -> Void)?
+    /// Whether to detect committed clicks (the click-to-center setting). Off: no tracking, no timer
+    /// and no scroll monitor, so the setting costs nothing while it's off.
+    public var commitsClicks = false {
+        didSet { if !commitsClicks { cancelPendingClick() } }
+    }
+    private var clickTracker = ClickCommitTracker()
+    private var clickWork: DispatchWorkItem?
+    /// A global scroll monitor that exists only while a click waits out its double-click interval —
+    /// a scroll then means the click wasn't a commitment. Never installed otherwise.
+    private var scrollMonitor: Any?
 
     private let workspace = NSWorkspace.shared
     private var observers: [pid_t: AXObserver] = [:]
@@ -155,8 +168,13 @@ public final class WindowObserver {
             guard let self else { return }
             if event.type == .leftMouseDown {
                 self.leftMouseDown = true
+                if self.commitsClicks, let p = event.cgEvent?.location {
+                    self.cancelPendingClick()
+                    self.clickTracker.mouseDown(at: p)
+                }
                 self.onUserMouseDown?()
             } else {
+                if self.commitsClicks { self.trackMouseUp(event) }
                 self.handleMouseUp()
             }
         }
@@ -182,10 +200,54 @@ public final class WindowObserver {
         dragPending = nil
         pendingDrags.removeAll()
         if let m = mouseMonitor { NSEvent.removeMonitor(m); mouseMonitor = nil }
+        cancelPendingClick()
         leftMouseDown = false
         reconcileDeferred = false
         pendingFullReconcile = false
         pendingFocusPID = nil
+    }
+
+    // MARK: - Committed clicks (Seats & Pile slice 1)
+
+    /// A mouseUp while committed clicks are tracked: if it ends a single, still click, wait out the
+    /// double-click interval (watching for scrolls), then report the click.
+    private func trackMouseUp(_ event: NSEvent) {
+        let now = CACurrentMediaTime()
+        guard let p = event.cgEvent?.location,
+              let deadline = clickTracker.mouseUp(at: p, clickCount: event.clickCount, now: now,
+                                                  doubleClickInterval: NSEvent.doubleClickInterval) else {
+            stopScrollWatch()
+            return
+        }
+        startScrollWatch()
+        clickWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.clickWork = nil
+            self.stopScrollWatch()
+            if let point = self.clickTracker.commit(now: CACurrentMediaTime()) { self.onCommittedClick?(point) }
+        }
+        clickWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline - now), execute: work)
+    }
+
+    /// Drop a click that is still waiting out its double-click interval (a scroll, a Strip command).
+    public func cancelPendingClick() {
+        clickTracker.cancel()
+        clickWork?.cancel()
+        clickWork = nil
+        stopScrollWatch()
+    }
+
+    private func startScrollWatch() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] _ in
+            self?.cancelPendingClick()
+        }
+    }
+
+    private func stopScrollWatch() {
+        if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
     }
 
     // MARK: - Workspace notifications

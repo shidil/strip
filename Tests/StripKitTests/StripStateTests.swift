@@ -201,79 +201,216 @@ final class StripStateTests: XCTestCase {
         XCTAssertEqual(s.centerId, before.centerId)
     }
 
-    // MARK: - moveFocused (carry the focused window along the film)
+    // MARK: - Seat keys (Seats & Pile slice 1)
 
-    func testMoveFocusedOnCenterSwapsCleanlyWithRightNeighbor() {
-        // Focus on the primary slot (the common case). Carrying it right must cleanly swap C and
-        // R's contents — L is left completely undisturbed (no cascade, unlike the old ring-carry).
-        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .C)
-        XCTAssertEqual(assignment(s)[.L], 2)
-        XCTAssertEqual(assignment(s)[.R], 4)
-
-        s.moveFocused(1)
-
-        XCTAssertEqual(s.centerId, 4, "the old right-neighbor window becomes the new center")
-        XCTAssertEqual(assignment(s)[.C], 4)
-        XCTAssertEqual(assignment(s)[.L], 2, "left flank is untouched by the swap")
-        XCTAssertEqual(assignment(s)[.R], 3, "the old center is displaced into R")
-        XCTAssertEqual(s.focusSlot, .R, "focus rides the carried window into R")
+    func testSeatKeysNameLeftCenterRightPerColumnCount() {
+        let three = StripState(ring: ring, cols: 3)
+        XCTAssertEqual(SeatKey.allCases.map(three.seat(for:)), [.L, .C, .R])
+        let two = StripState(ring: ring, cols: 2)
+        XCTAssertEqual(SeatKey.allCases.map(two.seat(for:)), [.L, .L, .R], "2-up: L acts as the center")
+        let mono = StripState(ring: ring, cols: 1)
+        XCTAssertEqual(SeatKey.allCases.map(mono.seat(for:)), [.C, .C, .C], "monocle: every key means C")
     }
 
-    func testMoveFocusedOffCenterSwapsIntoCenterAndFocusRidesAlong() {
-        // Focus moved off-center (J/K) to L, which holds window 2 while 3 stays centered. Carrying
-        // right must swap L and C cleanly: window 2 becomes the new center, the old center (3) is
-        // displaced to L, and R is untouched. Focus rides with window 2 into C.
-        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, focusSlot: .L)
-        XCTAssertEqual(assignment(s)[.L], 2, "window 2 is focused, in L")
-        XCTAssertEqual(assignment(s)[.R], 4)
+    // MARK: - Pile order
 
-        s.moveFocused(1)
+    /// 3-up, ring 1…7 centered on 3: L=2 C=3 R=4; 5, 6, 7, 1 parked.
+    private var threeUp: StripState { StripState(ring: ring, centerId: 3, cols: 3, focusSlot: .C) }
 
-        XCTAssertEqual(s.centerId, 2, "the carried window becomes the new center")
-        XCTAssertEqual(assignment(s)[.C], 2)
-        XCTAssertEqual(assignment(s)[.L], 3, "the old center is displaced into L")
-        XCTAssertEqual(assignment(s)[.R], 4, "right flank is untouched")
-        XCTAssertEqual(s.focusSlot, .C, "focus rides the moved window into C")
+    func testPileSeedsFromTheRingNearestTheCenterFirst() {
+        XCTAssertEqual(threeUp.pile, [5, 1, 6, 7], "distance 2 (right, then left), then distance 3")
     }
 
-    func testMoveFocusedSkipsOverAPinnedSlotToReachTheNextUnpinnedNeighbor() {
-        // C is pinned (window 3); focus is on L (window 1). Carrying right must skip the pinned
-        // center entirely and swap directly with R — the pinned window never moves.
-        var s = StripState(ring: ring, centerId: 1, cols: 3, emphasis: .focus, pins: [.C: 3],
-                           focusSlot: .L)
-        XCTAssertEqual(assignment(s)[.R], 2)
+    func testPileFollowsRecencyBeforeRingDistance() {
+        var s = threeUp
+        s.mru = [6, 3, 7]
+        XCTAssertEqual(s.pile, [6, 7, 5, 1], "seated 3 is skipped; unknown windows follow by distance")
+    }
 
-        s.moveFocused(1)
+    func testPruneDropsWindowsThatLeftTheRing() {
+        var s = threeUp
+        s.mru = [6, 99, 3]
+        s.lastTrade = Trade(a: 99, b: 3, from: .R, to: .C)
+        s.pruneMRU()
+        XCTAssertEqual(s.mru, [6, 3])
+        XCTAssertNil(s.lastTrade)
+    }
 
-        XCTAssertEqual(s.pins[.C], 3, "the pinned window never moves")
-        XCTAssertEqual(assignment(s)[.C], 3)
-        XCTAssertEqual(assignment(s)[.L], 2, "R's old occupant swaps into L")
-        XCTAssertEqual(assignment(s)[.R], 1, "the carried window lands in R, skipping the pin")
+    // MARK: - Draw
+
+    /// Frames of every window except `ids`, so a test can assert nothing else moved.
+    private func frames(_ s: StripState, except ids: Set<CGWindowID>) -> [CGWindowID: CGRect] {
+        let vis = CGRect(x: 0, y: 0, width: 3440, height: 1440)
+        var out: [CGWindowID: CGRect] = [:]
+        for p in StripLayout(s).placements(in: vis) where !ids.contains(p.id) { out[p.id] = p.frame }
+        return out
+    }
+
+    /// Every managed window is either in a seat or in the pile, never both (design invariant).
+    private func assertSeatsAndPilePartitionTheRing(_ s: StripState, file: StaticString = #filePath, line: UInt = #line) {
+        let seated = Set(assignment(s).values)
+        XCTAssertTrue(seated.isDisjoint(with: s.pile), "a window is both seated and in the pile", file: file, line: line)
+        XCTAssertEqual(seated.union(s.pile), Set(s.ring), "a window is lost", file: file, line: line)
+        XCTAssertEqual(s.pile.count, Set(s.pile).count, "the pile repeats a window", file: file, line: line)
+    }
+
+    func testDrawIntoASatelliteSwapsTwoWindowsAndTogglesBack() {
+        var s = threeUp
+        let before = frames(s, except: [4, 5])
+        XCTAssertEqual(s.draw(into: .R), Draw(drawn: 5, displaced: 4, seat: .R))
+        XCTAssertEqual(assignment(s), [.L: 2, .C: 3, .R: 5])
+        XCTAssertEqual(s.focusSlot, .C, "focus stays where it was")
+        XCTAssertEqual(s.pile.first, 4, "the displaced window tops the pile")
+        XCTAssertEqual(frames(s, except: [4, 5]), before, "nothing else moves")
+        assertSeatsAndPilePartitionTheRing(s)
+
+        XCTAssertEqual(s.draw(into: .R), Draw(drawn: 4, displaced: 5, seat: .R), "drawing again toggles back")
+        XCTAssertEqual(assignment(s), [.L: 2, .C: 3, .R: 4])
+        XCTAssertEqual(s.pile.first, 5)
+    }
+
+    func testTheDisplacedWindowTopsADeeperPile() {
+        // With a real recency history the displaced window must still be the next draw, ahead of
+        // more recently used parked windows — otherwise a second ⌃⌥O wouldn't toggle back.
+        var s = threeUp
+        s.mru = [3, 6, 7, 2, 4]
+        XCTAssertEqual(s.draw(into: .R)?.drawn, 6, "pile[0] is the most recent parked window")
+        XCTAssertEqual(s.pile, [4, 7, 5, 1])
+        XCTAssertEqual(s.draw(into: .R)?.drawn, 4, "drawing again toggles back")
+        XCTAssertEqual(s.pile.first, 6)
+    }
+
+    func testDrawIntoTheCenterFocusesItAndTogglesBetweenTheTwoMostRecent() {
+        var s = threeUp
+        s.focusSlot = .L
+        XCTAssertEqual(s.draw(into: .C), Draw(drawn: 5, displaced: 3, seat: .C))
+        XCTAssertEqual(assignment(s), [.L: 2, .C: 5, .R: 4])
+        XCTAssertEqual(s.centerId, 5)
+        XCTAssertEqual(s.focusSlot, .C, "a draw into the center focuses it")
+        XCTAssertEqual(Array(s.mru.prefix(2)), [5, 3])
+        assertSeatsAndPilePartitionTheRing(s)
+
+        XCTAssertEqual(s.draw(into: .C)?.drawn, 3, "⌃⌥I again flips back to the previous center")
+        XCTAssertEqual(s.draw(into: .C)?.drawn, 5)
+    }
+
+    func testDrawInMonocleTogglesTheCenter() {
+        var s = StripState(ring: [1, 2, 3], centerId: 1, cols: 1)
+        s.mru = [1, 3, 2]
+        XCTAssertEqual(s.draw(into: s.seat(for: .u))?.drawn, 3, "pile[0] is the most recent parked window")
+        XCTAssertEqual(assignment(s), [.C: 3])
+        XCTAssertEqual(s.draw(into: .C)?.drawn, 1)
+        assertSeatsAndPilePartitionTheRing(s)
+    }
+
+    func testExplicitDrawWorksOnALockedSeatAndKeepsTheLock() {
+        var s = threeUp
+        s.pins = [.R: 4]
+        let before = frames(s, except: [4, 5])
+        XCTAssertEqual(s.draw(into: .R)?.drawn, 5)
+        XCTAssertEqual(s.pins[.R], 5, "the lock now holds the drawn window")
+        XCTAssertEqual(assignment(s), [.L: 2, .C: 3, .R: 5])
+        XCTAssertEqual(s.pile.first, 4)
+        XCTAssertEqual(frames(s, except: [4, 5]), before, "nothing else moves")
+        assertSeatsAndPilePartitionTheRing(s)
+    }
+
+    func testDrawWithAnEmptyPileIsANoOp() {
+        var s = StripState(ring: [1, 2, 3], centerId: 2, cols: 3)
+        XCTAssertNil(s.draw(into: .R))
+        XCTAssertEqual(s.ring, [1, 2, 3])
+    }
+
+    // MARK: - Trade (⌃⌥⇧U / I / O)
+
+    func testTradeCenterWithRightAndFocusGoesWithTheWindow() {
+        var s = threeUp
+        XCTAssertEqual(s.trade(with: .R), Trade(a: 3, b: 4, from: .C, to: .R))
+        XCTAssertEqual(assignment(s), [.L: 2, .C: 4, .R: 3])
         XCTAssertEqual(s.focusSlot, .R)
+        XCTAssertEqual(s.lastTrade, Trade(a: 3, b: 4, from: .C, to: .R))
     }
 
-    func testMoveFocusedIsNoOpInMonocle() {
-        // No neighbor slot exists to swap with when only C is present.
-        var s = StripState(ring: ring, centerId: 3, cols: 1, focusSlot: .C)
-        let before = s
-        s.moveFocused(1)
-        XCTAssertEqual(s.ring, before.ring)
-        XCTAssertEqual(s.centerId, before.centerId)
+    func testTradeLeftWithRightLeavesTheCenterAndPileAlone() {
+        var s = threeUp
+        s.focusSlot = .L
+        let before = frames(s, except: [2, 4])
+        XCTAssertEqual(s.trade(with: .R), Trade(a: 2, b: 4, from: .L, to: .R))
+        XCTAssertEqual(assignment(s), [.L: 4, .C: 3, .R: 2])
+        XCTAssertEqual(s.centerId, 3)
+        XCTAssertEqual(frames(s, except: [2, 4]), before, "nothing else moves")
     }
 
-    func testMoveFocusedIsNoOpWhenFocusedSlotIsPinned() {
-        var s = StripState(ring: ring, centerId: 3, cols: 3, emphasis: .focus, pins: [.C: 3],
-                           focusSlot: .C)
-        let before = s
-        s.moveFocused(1)
-        XCTAssertEqual(s.ring, before.ring, "pinned focused window is never carried")
+    func testTradeIsItsOwnInverse() {
+        var s = threeUp
+        let original = s.ring
+        s.trade(with: .R)
+        s.trade(with: .C)
+        XCTAssertEqual(s.ring, original)
+        XCTAssertEqual(s.centerId, 3)
         XCTAssertEqual(s.focusSlot, .C)
     }
 
-    func testMoveFocusedIsNoOpOnEmptyRing() {
-        var s = StripState(ring: [], centerId: nil, cols: 3, focusSlot: .C)
-        s.moveFocused(1)
-        XCTAssertTrue(s.ring.isEmpty)
+    func testTradeInTwoUp() {
+        var s = StripState(ring: [1, 2, 3], centerId: 1, cols: 2, focusSlot: .R)
+        XCTAssertEqual(s.trade(with: s.seat(for: .i)), Trade(a: 2, b: 1, from: .R, to: .L))
+        XCTAssertEqual(assignment(s), [.L: 2, .R: 1])
+        XCTAssertEqual(s.centerId, 2)
+    }
+
+    func testTradeIsANoOpOnALockedSeatInMonocleOrOntoItself() {
+        var s = threeUp
+        s.pins = [.R: 4]
+        XCTAssertNil(s.trade(with: .R), "locked target")
+        s.focusSlot = .R
+        XCTAssertNil(s.trade(with: .L), "locked source")
+        s.pins = [:]
+        XCTAssertNil(s.trade(with: .R), "onto itself")
+        var mono = StripState(ring: ring, centerId: 3, cols: 1)
+        XCTAssertNil(mono.trade(with: .C))
+        XCTAssertEqual(s.ring, ring)
+    }
+
+    // MARK: - Promote (⌃⌥↩, click, ⌘Tab)
+
+    func testPromoteTradesTheFocusedSatelliteIntoTheCenterAndUndoesOnTheCenter() {
+        var s = threeUp
+        s.focusSlot = .R
+        XCTAssertEqual(s.promote(), Trade(a: 4, b: 3, from: .R, to: .C))
+        XCTAssertEqual(assignment(s), [.L: 2, .C: 4, .R: 3])
+        XCTAssertEqual(s.focusSlot, .C, "focus goes with the promoted window")
+
+        XCTAssertEqual(s.promote()?.from, .C, "promote on the center undoes the last trade")
+        XCTAssertEqual(assignment(s), [.L: 2, .C: 3, .R: 4])
+        XCTAssertEqual(s.focusSlot, .C, "focus stays on the center")
+
+        s.promote()
+        XCTAssertEqual(assignment(s)[.C], 4, "and again redoes it")
+    }
+
+    func testPromoteOnTheCenterWithNoTradeIsANoOp() {
+        var s = threeUp
+        XCTAssertNil(s.promote())
+        XCTAssertEqual(s.ring, ring)
+    }
+
+    func testPromoteByIdMovesAVisibleSatelliteIntoTheCenter() {
+        var s = threeUp
+        XCTAssertEqual(s.promote(2), Trade(a: 2, b: 3, from: .L, to: .C))
+        XCTAssertEqual(assignment(s), [.L: 3, .C: 2, .R: 4])
+        XCTAssertEqual(s.focusSlot, .C)
+    }
+
+    func testPromoteByIdNeverMovesALockedParkedOrCenterWindow() {
+        var s = threeUp
+        s.pins = [.L: 2]
+        XCTAssertNil(s.promote(2), "locked seat")
+        XCTAssertNil(s.promote(3), "already the center")
+        XCTAssertNil(s.promote(6), "parked")
+        XCTAssertEqual(s.focusSlot, .C)
+        var mono = StripState(ring: ring, centerId: 3, cols: 1)
+        XCTAssertNil(mono.promote(4), "monocle")
+        XCTAssertEqual(s.ring, ring)
     }
 
     // MARK: - Closing the centered window (successor pick, M6)
@@ -346,6 +483,8 @@ final class StripStateTests: XCTestCase {
         XCTAssertEqual(s.focusSlot, .C)
         XCTAssertFalse(a.values.contains(3), "old center is parked")
         XCTAssertEqual(Set(s.ring), [1, 2, 3, 4, 5, 6], "membership unchanged")
+        XCTAssertEqual(s.mru, [6, 3], "the summoned window is most recent; the old center tops the pile")
+        XCTAssertEqual(s.pile.first, 3)
     }
 
     func testSummonInTwoUpLandsInTheLeftAnchor() {

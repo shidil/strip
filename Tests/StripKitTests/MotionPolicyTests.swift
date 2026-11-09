@@ -75,6 +75,16 @@ final class MotionPolicyTests: XCTestCase {
         XCTAssertFalse(MotionPolicy.sweepsAcross(from: parkedLeft, to: centered, in: vis))
     }
 
+    // MARK: - Trades (Seats & Pile slice 1)
+
+    func testOnlyALeftRightTradeIn3UpCuts() {
+        XCTAssertTrue(MotionPolicy.tradeCuts(.L, .R, cols: 3))
+        XCTAssertTrue(MotionPolicy.tradeCuts(.R, .L, cols: 3))
+        XCTAssertFalse(MotionPolicy.tradeCuts(.L, .C, cols: 3), "neighbors spring")
+        XCTAssertFalse(MotionPolicy.tradeCuts(.C, .R, cols: 3))
+        XCTAssertFalse(MotionPolicy.tradeCuts(.L, .R, cols: 2), "in 2-up L and R are neighbors")
+    }
+
     // MARK: - The ring produces these moves (why the rule exists)
 
     /// Monocle with 3 windows: the window parked on the left is parked on the RIGHT after one

@@ -9,7 +9,9 @@ struct HelpOverlayView: View {
     /// (key chips, description). Mirrors the prototype `helpRows`.
     static let rows: [(keys: [String], label: String)] = [
         (["H", "L"], "Slide the film — bring the prev / next window to center"),
-        (["⇧H", "⇧L"], "Carry the focused window along the strip (reorder)"),
+        (["U", "I", "O"], "Draw the next window from the pile into the left / center / right seat"),
+        (["⇧U", "⇧I", "⇧O"], "Trade the focused window with the left / center / right seat"),
+        (["↩"], "Promote the focused window to center (on center: undo the last trade)"),
         (["Tab", "J / K"], "Move focus between slots"),
         (["P"], "Pin / unpin the focused slot — it stays put as others flow"),
         (["1", "2", "3"], "Monocle / 2-up / 3-up layout"),

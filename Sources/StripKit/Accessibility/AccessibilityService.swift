@@ -67,6 +67,32 @@ public final class AccessibilityService {
         return ids
     }
 
+    /// The normal window the user clicked at `point` (Quartz global): the frontmost on-screen window
+    /// under the point, excluding Strip's own panels, if it is a normal (layer 0) window. A click
+    /// that hit the Dock, the menu bar or another app's panel returns nil. Identity only: one
+    /// window-server list read, no AX. Called once per committed click, only with click-to-center on.
+    public func windowID(at point: CGPoint) -> CGWindowID? {
+        let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let info = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        return Self.topWindow(at: point, in: info, excludingPID: ProcessInfo.processInfo.processIdentifier)
+    }
+
+    /// Pure half of `windowID(at:)`: `info` is the window server's on-screen list, front to back.
+    static func topWindow(at point: CGPoint, in info: [[String: Any]], excludingPID ownPID: pid_t) -> CGWindowID? {
+        for w in info {
+            if (w[kCGWindowOwnerPID as String] as? pid_t) == ownPID { continue }
+            if let alpha = w[kCGWindowAlpha as String] as? Double, alpha == 0 { continue }
+            guard let dict = w[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: dict as CFDictionary),
+                  bounds.contains(point) else { continue }
+            guard (w[kCGWindowLayer as String] as? Int) == 0 else { return nil }
+            return w[kCGWindowNumber as String] as? CGWindowID
+        }
+        return nil
+    }
+
     /// All managed standard windows across every running regular app, on every display.
     ///
     /// A *hidden* app (Dock "Hide" / ⌘H) is skipped entirely: app-hide orders all its windows off

@@ -26,17 +26,21 @@ struct PersistedSettings: Codable, Equatable {
     /// Which screen edge the film rail is anchored to. Declared last with a default for the same
     /// forward-compatibility reason as `focusRingEnabled`.
     var railEdge: RailEdge = .default
+    /// Whether a committed click or ⌘Tab into a satellite promotes it to the center (Seats & Pile).
+    /// Off by default until Spaces support lands (slice 5).
+    var clickToCenter: Bool = false
 
     private static let key = "strip.settings.v1"
 
     init(config: LayoutConfig, cols: Int, emphasisEqual: Bool, springIndex: Int,
-         focusRingEnabled: Bool = true, railEdge: RailEdge = .default) {
+         focusRingEnabled: Bool = true, railEdge: RailEdge = .default, clickToCenter: Bool = false) {
         self.config = config
         self.cols = cols
         self.emphasisEqual = emphasisEqual
         self.springIndex = springIndex
         self.focusRingEnabled = focusRingEnabled
         self.railEdge = railEdge
+        self.clickToCenter = clickToCenter
     }
 
     /// Decode tolerantly so a blob written before `focusRingEnabled`/`railEdge` existed still loads —
@@ -50,6 +54,7 @@ struct PersistedSettings: Codable, Equatable {
         springIndex = try c.decodeIfPresent(Int.self, forKey: .springIndex) ?? 0
         focusRingEnabled = try c.decodeIfPresent(Bool.self, forKey: .focusRingEnabled) ?? true
         railEdge = try c.decodeIfPresent(RailEdge.self, forKey: .railEdge) ?? .default
+        clickToCenter = try c.decodeIfPresent(Bool.self, forKey: .clickToCenter) ?? false
     }
 
     /// Load the saved settings, or nil if none have been written yet (or decoding fails).

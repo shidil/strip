@@ -135,7 +135,10 @@ make e2e-vm          # same suite in the strip-e2e Tart VM — the default verif
 |---|---|---|
 | ⌃⌥H / ⌃⌥L | slide film prev/next (rotate) | ✅ |
 | ⌃⌥J / ⌃⌥K, ⌃⌥Tab | move focus between slots | ✅ |
-| ⌃⌥⇧H / ⌃⌥⇧L | carry focused window along film (reorder) | ✅ |
+| ⌃⌥U / I / O | draw `pile[0]` into L / C / R (a cut; again toggles back) | ✅ M8 slice 1 |
+| ⌃⌥⇧U / I / O | trade the focused window with L / C / R (L↔R cuts) | ✅ M8 slice 1 |
+| ⌃⌥↩ | promote the focused satellite into C; on C, undo the last trade | ✅ M8 slice 1 |
+| ~~⌃⌥⇧H / ⌃⌥⇧L~~ | ~~carry focused window along film~~ — retired in M8 slice 1 (use ⌃⌥⇧U/I/O) | — |
 | ⌃⌥1 / 2 / 3 | monocle / 2-up / 3-up | ✅ |
 | ⌃⌥E | focus ↔ equal emphasis | ✅ |
 | ⌃⌥T | cycle spring feel (Track/Pop/Glide) | ✅ |
@@ -310,7 +313,14 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, O
         snap (`MotionPolicy`); focus follows external activation with 0 motion (`focusFollow`); a
         click or ⌘ key cancels a pending focus hand-off; a user-caused activation of a parked window
         swaps it into C (`summon`, attribution = click/⌘ key within 1 s). e2e: 28/28.
-      - Slice 1 — promote + draw on the ring (⌃⌥U/I/O/↩, committed-click `PromotePolicy`, `mru`).
+        (`summon` shipped unguarded, before the Spaces guard; revisit with slice 5.)
+      - [x] Slice 1 — promote + draw on the ring ✅ 2026-11-06: `StripState` gains `mru`/`pile`,
+        `draw(into:)` (⌃⌥U/I/O, a cut; again toggles back), `trade(with:)` (⌃⌥⇧U/I/O; L↔R cuts via
+        `MotionPolicy.tradeCuts`) and `promote` (⌃⌥↩; on C undoes `lastTrade`); ⌃⌥⇧H/L retired.
+        Pure `PromotePolicy` + `ClickCommitTracker` (committed click; attribution: mouse → click path,
+        ⌘ key → 250 ms settle). **Click/⌘Tab promote is behind "Center on click or ⌘Tab", OFF by
+        default until slice 5** (owner decision 2026-11-06). e2e: `scenario_draw`,
+        `scenario_trade_promote`, `scenario_cmd_tab_promote`; committed clicks are a hand test.
       - Slice 2 — new pure `StripCore` target: `Table`, reducer `reduce(state, event, now)`, typed
         events, ordered `MovePlan`/`transitions()`, replay harness (ADR-0006: evolve in place, no new project).
       - Slice 3 — `StripController` → thin executor; animator phase barriers; two-phase `.cut`; new/close/hole policy.
@@ -611,7 +621,8 @@ The two milestone-sized/ambiguous ones were promoted/clarified: vertical columns
     (needs a focus-history in `StripController`); (c) non-AX providers — `wezterm cli`, AppleScript
     URLs for Safari/Chrome (Automation TCC prompt per app), windows outside the ring (minimized /
     hidden / other display; selecting one adopts or un-minimizes it); other Spaces stay deferred.
-- ~~**Swap focused ↔ neighbor** (S)~~ — ✅ shipped 2026-07-01: `StripState.moveFocused(_:)` (pure,
+- ~~**Swap focused ↔ neighbor** (S)~~ — ✅ shipped 2026-07-01, **retired 2026-11-06** (M8 slice 1:
+  trade with a named seat, `StripState.trade(with:)`, ⌃⌥⇧U/I/O, covers every pair incl. L↔R): `StripState.moveFocused(_:)` (pure,
   tested) swaps the focused slot's window with its immediate slot-neighbor (L↔C or C↔R), guaranteed
   to land exactly there — a clean two-window exchange, everything else undisturbed. Focus rides along
   with the carried window. No-op on a pinned focused slot; pinned slots are skipped over (never moved)
