@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 /// Whether a window can be seen.
-public enum Visibility: String, Equatable {
+public enum Visibility: String, Equatable, Codable {
     case shown
     /// In the Dock.
     case minimized
@@ -11,7 +11,7 @@ public enum Visibility: String, Equatable {
 }
 
 /// What an enumeration reports about one window.
-public struct WindowInfo: Equatable {
+public struct WindowInfo: Equatable, Codable {
     public var id: CGWindowID
     public var pid: Int32
     /// Where the window is now (Quartz global).

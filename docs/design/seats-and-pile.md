@@ -40,6 +40,7 @@ struct Table: Equatable {
   var seats: [Slot: CGWindowID]       // keys ⊆ slots(cols)
   var pile: [CGWindowID]              // MRU; pile[0] = next draw
   var holes: [Slot: CGWindowID]       // seat reserved for a hidden/minimized window
+  var hidden: [CGWindowID]            // hidden/minimized windows that own no seat (step 2)
   var locks: Set<Slot>                // today's pins become seat locks
   var focusSeat: Slot
   var lastTrade: (CGWindowID, CGWindowID)?
@@ -49,7 +50,7 @@ struct Table: Equatable {
 
 **Invariants (each one a unit test):**
 
-- Every managed window id is in exactly one of `seats`, `pile` or `holes`.
+- Every managed window id is in exactly one of `seats`, `pile`, `holes` or `hidden`.
 - C is never empty while any card exists.
 - No automatic operation changes a locked seat.
 - `trade ∘ trade = id`.
@@ -217,13 +218,15 @@ and the safety net (e2e VM suite, signing identity, signposts) are reused.
     `reduce(state, event, now) -> (state, MovePlan, [SideEffect])`.
   - Time is an input, so every debounce, grace window and settle becomes a tested policy rather
     than a timer scattered through the controller. That covers the 75 ms reconcile, the 0.2 s
-    self-activation grace, `doubleClickInterval`, the 250 ms summon settle and the 120 ms coalesce.
+    self-activation grace, `doubleClickInterval`, the 250 ms ⌘Tab promote settle and the 120 ms parked
+    coalesce.
   - `StripCore` must not import `StripKit`; `StripKit` depends on `StripCore`.
-- **Typed events, one serial queue (main):**
-  - `windowsEnumerated`, `windowCreated/Destroyed/Hidden/Minimized/Restored`.
-  - `focusChanged(id, attribution: .user | .app)`, `committedClick(id)`.
-  - `chord(Command)`, `spaceChanged(SpaceKey)`, `dragEnded(id, wasResize)`, `writeFailed(id, error)`.
-  - `frameClamped(id, requested, actual)`, `tick(now)`.
+- **Typed events, one serial queue (main)** (as built in step 2; see *Step 2 as built*):
+  - `windowsEnumerated(front to back, focused:)`, `tabReplaced`, `displayChanged`.
+  - `focusChanged(id?, pid)`, `userInput(.mouseDown | .mouseUp | .scroll | .commandKey)`,
+    `membershipHint(pid)`, `setting(.clickToCenter)`.
+  - `chord(Command, repeated:)`, `dragEnded(id, wasResize, frame)`, `writeFailed(id)`.
+  - `frameClamped(id, requested, actual)`, `tick`. `spaceChanged(SpaceKey)` comes with step 5.
 
   Every event is logged in a replayable form, so a recorded session from `/tmp/strip.log` becomes a
   unit test.
@@ -245,6 +248,53 @@ and the safety net (e2e VM suite, signing identity, signposts) are reused.
 - **Perf guard:** the reducer and plan sit on the hot path of every event. Add `reduce` and
   `planExecute` signposts in slice 2. Compare to the current `apply`/`animate` baseline before the
   slice 3 swap (MEASURING.md).
+
+### Step 2 as built (deviations from the sketch above)
+
+Step 2 (`seats-and-pile-core`, 2026-11-09) built the pure core. Where it departs from this doc:
+
+- **`Table.hidden`.** A hidden or minimized window that owns no seat (a minimized pile card, or a
+  hole whose seat a column change removed) moves to `hidden`. It is never drawn, picked or written;
+  a restore summons it. Keeping such windows in the pile let a draw deal out a minimized window. The
+  place invariant covers four places: `seats`, `pile`, `holes`, `hidden`.
+- **Lifecycle events are one enumeration diff.** `windowCreated/Destroyed/Hidden/Minimized/Restored`
+  are not events. The observer's notifications become `membershipHint(pid)`, the reducer debounces
+  them (75 ms) into `SideEffect.enumerate`, and `windowsEnumerated` is diffed for new, closed, hidden
+  and restored windows: the policy needs what only the snapshot has (the window macOS focused, sizes,
+  visibility).
+- **Attribution and committed clicks live in the reducer.** `focusChanged` carries the app's pid,
+  not an attribution; the reducer attributes it from the last `userInput` (a mouseDown or ⌘ key
+  within 1 s). There is no `committedClick` event: the reducer runs the click detector from
+  mouseDown / mouseUp, with the hit-test done by the executor at mouseUp. A committed click is judged
+  against the focus the reducer tracked, without a fresh focus read.
+- **Extra events:** `tabReplaced`, `displayChanged`, `userInput`, `membershipHint`, `setting`.
+  `writeFailed` carries no error.
+- **Effects:** `focus`, `wake(at:)` (the executor keeps one timer), `render`, `persist`,
+  `reseed` (a dragged window springs back from where it was dropped), `log` (`LogLine`, formatted
+  with app names by the executor, same texts the e2e suite greps), `enumerate`, `queryFocus`, `pill`.
+- **The presize phase.** `MovePlan` has up to three phases: *prepare* (invisible snaps: an incoming
+  card pre-sized while still parked, parked cards changing edge or size), *show* (springs and cuts on
+  screen), *clear* (the displaced card parks after its replacement is placed). Whether the presize
+  earns its write is decided in step 3, with a measurement.
+- **Pass skips empty seats.** Pass shifts only occupied, unlocked, hole-free seats. With one such
+  seat (monocle), pass is a draw toggle until step 4's hand panel.
+- **Focus timing choices:**
+  - Focus into an unknown window arms the 75 ms re-scan instead of enumerating at once, so it
+    coalesces with the window-created hint that usually comes with it. A focused window the reducer
+    thinks is hidden re-scans too.
+  - App-caused focus into a parked window moves it to the top of the pile (no write), so the pill's
+    ⌃⌥I draws it.
+  - A summon focuses its landing seat (R past a locked C), so nothing hands focus back to C.
+  - Strip's own-activation grace (0.2 s) ends early if the user clicks or presses ⌘ after it.
+  - Automatic promotes, summons and committed clicks skip while Strip's own hand-off is pending.
+  - An app activation inside a pending hand-off still loses to it (owner decision 2026-11-09,
+    BUGS.md); the reducer ignores the stale focus change, so its model agrees with the OS.
+  - A Strip command cancels a pending committed click and ⌘Tab promote (as today's `handle` does).
+- **Replay and signpost.** The executor logs `ST <json>` (display and settings) once, then
+  `EV <t> <json>` per event; `Replay.run` replays a session from the log and checks every invariant
+  after every step. `CoreDriver` (StripKit) wraps `reduce` in the `reduce` signpost; `planExecute`
+  comes with the executor in step 3. Headless baseline: `reduce` p50 0.2 µs, p90 ≈ 21 µs, max
+  ≤ 0.16 ms over 10k mixed events (release, M1 Pro).
 
 **Full-rewrite tripwire:** reopen ADR-0006 only if slice 3 produces measured or captured evidence
 that the animator or observer contract cannot support ordered, attributed, Space-aware moves without

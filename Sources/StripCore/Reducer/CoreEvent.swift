@@ -3,7 +3,7 @@ import CoreGraphics
 /// A user command the reducer acts on (`docs/design/seats-and-pile.md`, *Interactions*). Commands
 /// that only touch Strip's own chrome or the animator (Overview, help, search, the spring preset,
 /// release-all) stay in the executor.
-public enum Command: Equatable {
+public enum Command: Equatable, Codable {
     /// ⌃⌥U / I / O: draw `pile[0]` into the seat the key names.
     case draw(SeatKey)
     /// ⌃⌥⇧U / I / O: trade the focused window with that seat.
@@ -41,7 +41,7 @@ public enum Command: Equatable {
 
 /// A raw input the executor saw outside Strip's own panels: the global mouse monitor and the hotkey
 /// tap. The reducer attributes focus changes to these and detects committed clicks from them.
-public enum InputEvent: Equatable {
+public enum InputEvent: Equatable, Codable {
     /// A left mouseDown in another app's window, the Dock, a notification, the menu bar.
     case mouseDown(at: CGPoint)
     /// The matching mouseUp. `hit` is the managed window under the pointer (the executor hit-tests at
@@ -55,15 +55,16 @@ public enum InputEvent: Equatable {
 }
 
 /// A user setting the reducer's policy reads.
-public enum Setting: Equatable {
+public enum Setting: Equatable, Codable {
     /// "Center on click or ⌘Tab": a committed click on a satellite, or ⌘Tab into one, promotes it.
     /// Off by default until Spaces support lands (Seats & Pile step 5).
     case clickToCenter(Bool)
 }
 
 /// Everything the reducer reacts to. One serial queue (main) feeds these in order, with the time
-/// each one happened at (`Reducer.reduce(_:_:now:)`).
-public enum CoreEvent: Equatable {
+/// each one happened at (`Reducer.reduce(_:_:now:)`). Codable: the executor logs every event as a
+/// replay line (`Replay`), so a recorded session replays as a test.
+public enum CoreEvent: Equatable, Codable {
     /// A command. `repeated` is true for an OS auto-repeat of a held key.
     case chord(Command, repeated: Bool)
     /// A fresh enumeration: every window that exists, **front to back**, with transient misses

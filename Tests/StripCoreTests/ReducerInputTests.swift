@@ -2,52 +2,6 @@ import XCTest
 import CoreGraphics
 @testable import StripCore
 
-/// Drives the reducer like the executor does: events at given times, and a `.tick` whenever the one
-/// timer the reducer's `wake` effects set comes due. Keeps every reduction for the assertions.
-struct Session {
-    var state: CoreState
-    /// The executor's one timer: the last `wake` the reducer emitted.
-    var timer: CFTimeInterval?
-    var clock: CFTimeInterval = 0
-    var log: [(at: CFTimeInterval, event: CoreEvent, reduction: Reduction)] = []
-
-    init(_ state: CoreState) { self.state = state }
-
-    /// Run every tick due by `t`, then `event` at `t`.
-    @discardableResult
-    mutating func send(_ event: CoreEvent, at t: CFTimeInterval) -> Reduction {
-        advance(to: t)
-        return apply(event, at: t)
-    }
-
-    /// Run every tick due by `t`.
-    mutating func advance(to t: CFTimeInterval) {
-        var guardrail = 0
-        while let at = timer, at <= t {
-            timer = nil
-            apply(.tick, at: max(at, clock))
-            guardrail += 1
-            precondition(guardrail < 1000, "ticks never settle")
-        }
-        clock = max(clock, t)
-    }
-
-    @discardableResult
-    private mutating func apply(_ event: CoreEvent, at t: CFTimeInterval) -> Reduction {
-        let r = Reducer.reduce(state, event, now: t)
-        for case let .wake(at) in r.effects { timer = at }
-        state = r.state
-        clock = t
-        log.append((t, event, r))
-        return r
-    }
-
-    /// Reductions after time `t` (exclusive), or all.
-    func since(_ t: CFTimeInterval = -.infinity) -> [Reduction] {
-        log.filter { $0.at > t }.map(\.reduction)
-    }
-}
-
 /// Input and focus timing (Seats & Pile step 2, commit 5): attribution, Strip's own activations,
 /// focus following, hand-off cancels and re-syncs, the ⌘Tab promote settle, committed clicks, the
 /// parked summon and pill, and the re-scan debounce, all as deadlines in `CoreState.pending`. The
@@ -57,19 +11,12 @@ final class ReducerInputTests: XCTestCase {
     let interval: CFTimeInterval = 0.5
     let point = CGPoint(x: 3000, y: 600)
 
-    /// 3-up: L=2 C=3 R=4; pile 5, 1, 6, 7; every window where the reducer put it, window n in app
-    /// pid 10n; 3 has focus. Click-to-center as given.
+    /// `Fixture.threeUp`: L=2 C=3 R=4, pile 5, 1, 6, 7, window n in app pid 10n, 3 has focus.
     private func threeUp(clickToCenter: Bool = true) -> CoreState {
-        var s = CoreState(table: Table(seats: [.L: 2, .C: 3, .R: 4], pile: [5, 1, 6, 7]), stage: stage)
-        s.lastTargets = s.table.targets(on: stage, parkEdges: s.parkEdges)
-        for (id, f) in s.lastTargets { s.windows[id] = WindowInfo(id: id, pid: pid(id), frame: f) }
-        s.handedFocus = 3
-        s.recent = [3]
-        s.clickToCenter = clickToCenter
-        return s
+        Fixture.threeUp(stage: stage, clickToCenter: clickToCenter)
     }
 
-    private func pid(_ id: CGWindowID) -> Int32 { Int32(id) * 10 }
+    private func pid(_ id: CGWindowID) -> Int32 { Fixture.pid(id) }
     private func focus(_ id: CGWindowID) -> CoreEvent { .focusChanged(id, pid: pid(id)) }
     private func down(_ p: CGPoint? = nil) -> CoreEvent { .userInput(.mouseDown(at: p ?? point)) }
     private func up(_ p: CGPoint? = nil, count: Int = 1, hit: CGWindowID?) -> CoreEvent {
@@ -502,72 +449,23 @@ final class ReducerInputTests: XCTestCase {
     }
 
     private func randomSession(seed: UInt64, steps: Int = 150) -> Session {
-        var rng = SplitMix64(seed: seed)
+        var work = Workload(seed: seed)
         var s = Session(threeUp(clickToCenter: seed % 3 != 0))
-        var next: CGWindowID = 20
-        var t: CFTimeInterval = 0
-        func snapshot(_ st: CoreState) -> [WindowInfo] {
-            st.table.members.map { st.windows[$0] ?? WindowInfo(id: $0, pid: pid($0), frame: st.lastTargets[$0] ?? .zero) }
-        }
         for _ in 0..<steps {
-            t += [0.01, 0.05, 0.1, 0.13, 0.3, 0.6, 1.2][Int(rng.next() % 7)]
-            let members = s.state.table.members
-            let any = members.randomElement(using: &rng)
-            let event: CoreEvent
-            switch rng.next() % 12 {
-            case 0: event = .chord([.draw(.i), .draw(.o), .pass(1), .look(-1), .trade(.u), .promote, .lock,
-                                    .setCols(Int(rng.next() % 3) + 1)][Int(rng.next() % 8)], repeated: rng.next() % 4 == 0)
-            case 1, 2:
-                let id = rng.next() % 6 == 0 ? CGWindowID(99) : any
-                event = .focusChanged(id, pid: id.map(pid) ?? 0)
-            case 3: event = down(CGPoint(x: Double(rng.next() % 8), y: 0))
-            case 4: event = up(CGPoint(x: Double(rng.next() % 8), y: 0), count: Int(rng.next() % 2) + 1,
-                               hit: rng.next() % 3 == 0 ? nil : any)
-            case 5: event = rng.next() % 2 == 0 ? cmd : .userInput(.scroll)
-            case 6: event = .membershipHint(pid: Int32(rng.next() % 100))
-            case 7: event = .setting(.clickToCenter(rng.next() % 2 == 0))
-            case 8:
-                let id = next; next += 1
-                var list = snapshot(s.state)
-                list.insert(WindowInfo(id: id, pid: pid(id), frame: CGRect(x: 900, y: 200, width: 1200, height: 900)), at: 0)
-                event = .windowsEnumerated(list, focused: rng.next() % 2 == 0 ? id : s.state.handedFocus)
-            case 9:
-                var list = snapshot(s.state)
-                if let i = list.indices.randomElement(using: &rng) {
-                    if rng.next() % 2 == 0 { list.remove(at: i) } else {
-                        list[i].visibility = [.shown, .minimized, .hidden][Int(rng.next() % 3)]
-                    }
-                }
-                event = .windowsEnumerated(list, focused: s.state.handedFocus)
-            default: event = .tick
-            }
-            let r = s.send(event, at: t)
-            // The executor answers what the reducer asked for, at once.
-            if r.effects.contains(.enumerate) {
-                s.send(.windowsEnumerated(snapshot(s.state), focused: s.state.handedFocus), at: t)
-            }
-            if r.effects.contains(.queryFocus), let f = s.state.handedFocus {
-                s.send(focus(f), at: t)
-            }
+            let (t, event) = work.next(s.state)
+            s.drive(event, at: t)
             check(s, seed: seed)
         }
-        s.advance(to: t + 5)
+        s.advance(to: work.t + 5)
         XCTAssertNil(s.state.pending.earliest, "seed \(seed): a deadline never fired")
         return s
     }
 
     private func check(_ s: Session, seed: UInt64, file: StaticString = #filePath, line: UInt = #line) {
-        let st = s.state
-        XCTAssertEqual(st.table.invariantViolations(), [], "seed \(seed)", file: file, line: line)
         for entry in s.log.suffix(3) {
-            let hidden = Set(entry.reduction.state.windows.filter { $0.value.visibility != .shown }.keys)
-            XCTAssertTrue(entry.reduction.plan.ids.isDisjoint(with: hidden), "seed \(seed): a hidden window was written",
-                          file: file, line: line)
+            XCTAssertEqual(entry.reduction.invariantViolations(), [], "seed \(seed)", file: file, line: line)
         }
-        let members = Set(st.table.members)
-        XCTAssertTrue(Set(st.windows.keys).isSubset(of: members), file: file, line: line)
-        XCTAssertTrue(Set(st.recent).isSubset(of: members), file: file, line: line)
-        if let earliest = st.pending.earliest {
+        if let earliest = s.state.pending.earliest {
             XCTAssertEqual(s.timer, earliest, "seed \(seed): the executor's timer is stale", file: file, line: line)
             XCTAssertGreaterThan(earliest, s.clock - Timing.slack, "seed \(seed): an overdue deadline", file: file, line: line)
         }

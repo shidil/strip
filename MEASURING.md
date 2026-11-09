@@ -47,7 +47,8 @@ commands and the non-obvious gotchas that make each one actually work. Grouped b
   ```
   Present intervals: `apply`, `animate`, `frame`, `placements`, `allWindows`, `refresh`,
   `watchWindows`, `overlayRender`, `tabScan` (one window's tab walk, search start),
-  `tabPress` (one tab switch: peek, restore, or pick).
+  `tabPress` (one tab switch: peek, restore, or pick), `reduce` (one Seats & Pile reducer step, in
+  `CoreDriver`; the app emits it once step 3 swaps the reducer in).
 - **Events** (points in time):
   ```swift
   Signpost.log.emitEvent("inFlightDrop", "id=\(id)")
@@ -80,6 +81,7 @@ What each permanent signpost is *for*, and what "good" reads like (144 Hz dev ma
 | --- | --- | --- |
 | `apply` (interval) | chord→layout→enqueue cost on main | p50 ≈ 3–6 ms; **max under a frame** — a focus-change slide must not spike to 20–60 ms |
 | `placements` (interval) | pure layout (`resolve()`) cost | sub-ms; never the bottleneck at real ring sizes |
+| `reduce` (interval) | one reducer step: table verb + `MovePlan` + effects | headless baseline (`ReduceBenchmarkTests`, release, M1 Pro, 10k mixed events, ≈10 windows): p50 0.2 µs, p90 ≈ 21 µs, p99 ≈ 35 µs, max 60–155 µs. Re-run: `swift test -c release -Xswiftc -enable-testing --filter ReduceBenchmarkTests` |
 | `animate` (interval) | spring-seeding cost on main | sub-ms (post-33273ea); a spike means sync AX IPC crept back into seeding |
 | `frame` (interval) | per-tick spring step + write enqueue | ~6.9 ms floor at 144 Hz; a sub-1 ms outlier is two signposts back-to-back, not a real frame |
 | `allWindows` (interval) | full all-apps enumeration (main-bound) | **n = 0 on pure focus/activation**; runs only on real membership change |

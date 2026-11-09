@@ -327,8 +327,14 @@ Status-bar menu (▦ Strip) also exposes: Re-tile, Layout submenu, Slide film, O
         ⌘ key → 250 ms settle). **Click/⌘Tab promote is behind "Center on click or ⌘Tab", OFF by
         default until slice 5** (owner decision 2026-11-06). e2e: `scenario_draw`,
         `scenario_trade_promote`, `scenario_cmd_tab_promote`; committed clicks are a hand test.
-      - Slice 2 — new pure `StripCore` target: `Table`, reducer `reduce(state, event, now)`, typed
-        events, ordered `MovePlan`/`transitions()`, replay harness (ADR-0006: evolve in place, no new project).
+      - [x] Slice 2 — pure `StripCore` ✅ 2026-11-09 (`seats-and-pile-core`, `make test` only; nothing
+        in the app reads it yet): `Table` + verbs + invariants (`Table.hidden` added), `transitions()`
+        and `MovePlan` (prepare → show → clear), one reducer `reduce(state, event, now)` for commands,
+        window events (folded into the enumeration diff) and input/focus timing (every focus and
+        promote timer as a deadline in `CoreState.pending`), `Replay` (`ST`/`EV` log lines, invariants
+        after every step) and `CoreDriver` with the `reduce` signpost. Headless baseline: reduce p50
+        0.2 µs, p90 ≈ 21 µs, max ≤ 0.16 ms (release, 10k events). Deviations recorded in the design
+        doc (*Step 2 as built*). 436 tests (StripKitTests 212, StripCoreTests 224).
       - Slice 3 — `StripController` → thin executor; animator phase barriers; two-phase `.cut`; new/close/hole policy.
       - Slice 4 — hand panel (flagsChanged), bury/put-away, Cut/Deal presets.
       - Slice 5 — **Spaces-aware**: one `Table` per Space, freeze-not-drop, suspend in fullscreen
