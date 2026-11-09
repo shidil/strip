@@ -1,6 +1,6 @@
 import XCTest
 import CoreGraphics
-@testable import StripKit
+@testable import StripCore
 
 /// Respect-user-drags (M7 Slice 4): `DragResolver` must be the exact inverse of `SlotGeometry` for
 /// the dominant slot, so a user resize maps cleanly back into the sizing knobs and re-applying

@@ -1,6 +1,6 @@
 import XCTest
 import CoreGraphics
-@testable import StripKit
+@testable import StripCore
 
 /// The constraint learning state machine (`SizeConstraint.learned`) is what makes closing the
 /// clamp → learn → re-apply loop safe: `nil` ("nothing learned") is the controller's signal not to

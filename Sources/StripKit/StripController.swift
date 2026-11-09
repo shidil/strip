@@ -293,14 +293,14 @@ public final class StripController {
     /// A newly-appeared window narrower/shorter than these fractions of the display's visible area is
     /// treated as a transient/utility window (DMG installer, palette) and left floating instead of
     /// tiled — tiling it would demote the focused window and reflow the strip (BUGS.md #4). Tunable.
-    static let minTileWidthFraction: CGFloat = 0.2
-    static let minTileHeightFraction: CGFloat = 0.4
+    static let minTileWidthFraction: CGFloat = Admission.minWidthFraction
+    static let minTileHeightFraction: CGFloat = Admission.minHeightFraction
 
     /// Whether a newly-appeared window is large enough to auto-tile. Floats (returns false) when EITHER
     /// dimension is below its fraction of the visible frame. Only gates NEW windows — an already-managed
     /// window later resized small stays managed (ring membership is sticky). Pure → unit-testable.
     static func isTileableSize(_ size: CGSize, onDisplay vis: CGRect) -> Bool {
-        size.width >= vis.width * minTileWidthFraction && size.height >= vis.height * minTileHeightFraction
+        Admission.isTileable(size, on: vis)
     }
 
     // MARK: - Layout commands (menu-driven in M1)

@@ -62,17 +62,27 @@ Defining characteristics:
 |---|---|---|
 | `Package.swift` | SwiftPM manifest | `swift-tools-version:6.0`, language mode v5 on every target, platform `macOS .v14`. No third-party dependencies. |
 | `Sources/Strip/main.swift` | Process bootstrap | Sets `.accessory` activation policy, constructs `AppDelegate`, calls `app.run()`. |
-| `Sources/StripKit/` | The `StripKit` library target — all application logic | Importable and unit-testable without booting AppKit. |
+| `Sources/StripCore/` | The `StripCore` library target — the pure core (ADR-0006) | No AppKit, no AX, no `os`; must not import `StripKit`. `StripKit` depends on it and re-exports it (`StripCoreExports.swift`). |
+| `Sources/StripCore/Vocabulary/` | Shared pure types | `Slot`, `Emphasis`, `SeatKey`, `Trade`, `Draw`, `LayoutConfig`, `NewWindowPlacement`, `SizeConstraint`. |
+| `Sources/StripCore/Geometry/` | Pure geometry and motion rules | `SlotGeometry` (slot rectangles), `DragResolver` (inverse of `SlotGeometry`), `MotionPolicy` (sweep snaps, L↔R trade cuts), `TableGeometry` (`Stage`, `Edge`, seat rects and pile park frames). |
+| `Sources/StripCore/Table/` | The Seats & Pile model (not wired into the app until step 3) | `Table` (seats, MRU pile, holes, hidden, locks), its verbs (draw, trade, promote, pick, summon, pass, look, lock, columns), how it absorbs real windows (`Table+World`: add, remove, hide, restore, replace, adopt) and `invariantViolations()`. |
+| `Sources/StripCore/Plan/` | Motion between two tables | `transitions(from:to:…)` (stay / spring / cut / snapOffscreen) and `MovePlan` (ordered phases: prepare, show, clear). Park frames and edges are in `Geometry/TableGeometry.swift`. |
+| `Sources/StripCore/Reducer/` | The one reducer (not wired into the app until step 3) | `Reducer.reduce(state, event, now) -> Reduction` (state, `MovePlan`, `[SideEffect]`); `CoreState` (with `Pending` deadlines and `InputState`), `CoreEvent`/`Command`/`InputEvent`/`Setting`, `SideEffect`/`LogLine`/`Pill`, `Timing` (focus settle, held-key pacing, own-activation grace, focus re-sync, re-scan debounce, parked coalesce); `World.swift` handles window events (enumeration diffs, tabs, displays, drags, clamps, lost windows) and `Admission` (which new windows tile); `Input.swift` handles focus changes, user input, membership hints and settings (attribution, hand-off cancels, the ⌘Tab promote settle, committed clicks, the parked summon and pill). |
+| `Sources/StripCore/Replay/` | Record and replay reducer sessions | `Replay`: `ST <json>` / `EV <t> <json>` log lines (`CoreEvent` is `Codable`), `sessions(in:)` reads them out of `/tmp/strip.log`, `run` replays one and checks `Reduction.invariantViolations()` after every step. |
+| `Sources/StripCore/Policy/` | Pure timing policies | `PromotePolicy` (focus attribution, promote decisions), `ClickCommitTracker` (committed clicks). |
+| `Sources/StripKit/` | The `StripKit` library target — the platform layer and app logic | Importable and unit-testable without booting AppKit. |
 | `Sources/StripKit/AppDelegate.swift` | App lifecycle, Accessibility permission flow, status menu, the closure-wiring hub (`start()`), command routing | `handle(_:repeated:)` routes hotkey/menu commands to the controller or overlay. |
-| `Sources/StripKit/StripController.swift` | The coordinator (701 lines) | Owns `StripState` and `windowsById`; performs reconciliation, the apply pipeline, focus routing, drag policy, suspend/release, and persistence. |
+| `Sources/StripKit/StripController.swift` | The coordinator (1,159 lines) | Owns `StripState` and `windowsById`; performs reconciliation, the apply pipeline, focus routing, drag policy, suspend/release, and persistence. |
+| `Sources/StripKit/CoreDriver.swift` | The executor's handle on the reducer (wired in step 3) | Holds `CoreState`, wraps each `Reducer.reduce` in the `reduce` signpost interval (StripCore stays `os`-free), and records the session's `ST`/`EV` replay lines. |
 | `Sources/StripKit/Logging.swift`, `Signpost.swift` | File-mirrored logging and `os_signpost` instrumentation | `Log` is an enum namespace with a private serial queue; it writes to `/tmp/strip.log` because `open`-launched agents have no stdout. |
 | `Sources/StripKit/Accessibility/` | macOS AX integration | `AccessibilityService` (enumeration), `AXWindow` (single-window read/write), `AXAttrCache` (attribute memo), `EnhancedUI`, `PrivateAPIs`, `WindowObserver`. |
 | `Sources/StripKit/Animation/` | Animated window motion | `WindowAnimator` (display-link springs, off-main AX writes), `Spring` (`RectSpring` and presets), `WriteFailureTracker` (dead-element policy). |
 | `Sources/StripKit/Input/HotkeyService.swift` | Global ⌃⌥ hotkeys via a CGEvent tap | Emits `HotkeyCommand`; provides a modal `OverviewKey` path while the overview is open. |
-| `Sources/StripKit/Layout/` | Pure geometry and topology | `StripLayout` (ring rotation and placements), `SlotGeometry` (slot rectangles), `DragResolver` (inverse of `SlotGeometry`), `Coordinates` (Quartz↔Cocoa conversion). |
-| `Sources/StripKit/Model/` | State, configuration, persistence | `StripState`, `LayoutConfig`, `ManagedWindow`, `Settings`, `SteppingApps`, `Theme`. |
+| `Sources/StripKit/Layout/` | Pure geometry and topology | `StripLayout` (ring rotation and placements), `Coordinates` (Quartz↔Cocoa conversion). |
+| `Sources/StripKit/Model/` | State, configuration, persistence | `StripState`, `ManagedWindow`, `Settings`, `SteppingApps`, `Theme`. |
 | `Sources/StripKit/Overlay/` | On-top chrome: AppKit `NSPanel` hosting SwiftUI | Film rail, status pill, help overlay, overview grid, focus ring, thumbnails. |
-| `Tests/StripKitTests/` | 12 XCTest files | Cover the pure types and extracted static functions; `@testable import StripKit`. |
+| `Tests/StripCoreTests/` | XCTest | The pure core; `@testable import StripCore`. |
+| `Tests/StripKitTests/` | XCTest | StripKit's pure types and extracted static functions; `@testable import StripKit`. |
 | `Makefile`, `scripts/setup-signing.sh` | Build, run, signing | `make open` is the Accessibility-trusted launch path. |
 | `.github/workflows/ci.yml` | CI | `macos-15` job running tests plus release-bundle metadata and signature validation. |
 | `Resources/Info.plist` | Bundle configuration | `LSUIElement=true`, `LSMinimumSystemVersion 14.0`. |
@@ -185,14 +195,14 @@ sequenceDiagram
 - **Key files/types:** `StripController.activeScreen()`; `Layout/Coordinates.swift` (`primaryHeight`, `NSScreen.quartzFrame` / `quartzVisibleFrame`).
 - **Notes:** there is one global ring projected onto the mouse-active screen. The active screen is re-selected only in `init`, `refresh()` (`StripController.swift:136`), and the release path (`:580`); `apply()` reuses the stored `screen`. The application does not register for `NSApplication.didChangeScreenParameters`, so a display-configuration change takes effect on the next `refresh()` (the next reconcile), not on a plain `apply()`.
 
-### Layout engine — `Layout/`
+### Layout engine — `Layout/` and `StripCore/Geometry/`
 
 - **Responsibility:** decide which window occupies which slot (topology) and where each slot is positioned (geometry).
 - **Key files/types:** `StripLayout.resolve()` (pin-aware ring rotation), `placements(in:)` (projection onto Quartz rectangles and parking of off-strip windows), `activeId`; `SlotGeometry.rects(...)`; `DragResolver.resizeConfig(...)`; the `WindowPlacement` struct.
 - **Inputs:** `StripState` and a visible-frame `CGRect`.
 - **Outputs:** `[WindowPlacement]` (Quartz frames) and slot assignments.
 - **Owned state:** none; the computation is pure and its results are discarded after each `apply()`.
-- **Notes:** `StripLayout`, `SlotGeometry`, and `DragResolver` are pure (CoreGraphics only, no AppKit or AX) and are covered by unit tests. `Coordinates.swift` also lives in `Layout/` but imports AppKit (`NSScreen`) — it is the Quartz↔Cocoa boundary, not part of the pure engine. See [Layout Architecture](#layout-architecture).
+- **Notes:** `StripLayout`, `SlotGeometry`, and `DragResolver` are pure (CoreGraphics only, no AppKit or AX) and are covered by unit tests. `StripLayout` is in `Sources/StripKit/Layout/`; `SlotGeometry` and `DragResolver` are in the `StripCore` target (`Sources/StripCore/Geometry/`). `Coordinates.swift` also lives in `Layout/` but imports AppKit (`NSScreen`) — it is the Quartz↔Cocoa boundary, not part of the pure engine. See [Layout Architecture](#layout-architecture).
 
 ### Command and action dispatch — `StripController`
 
@@ -369,7 +379,7 @@ Not every AX frame write uses this queue. `WindowAnimator.snap` (the un-animated
 
 ## Layout Architecture
 
-The layout engine is a pure, value-typed core — `StripLayout`, `SlotGeometry`, and `DragResolver` in `Sources/StripKit/Layout/` (the directory also holds `Coordinates.swift`, which is the AppKit boundary, not part of the engine). It has two independent halves:
+The layout engine is a pure, value-typed core — `StripLayout` in `Sources/StripKit/Layout/` (the directory also holds `Coordinates.swift`, which is the AppKit boundary, not part of the engine), and `SlotGeometry` and `DragResolver` in the `StripCore` target (`Sources/StripCore/Geometry/`). It has two independent halves:
 
 - **Topology** (`StripLayout.resolve()`): decides which window lands in which slot by pin-aware ring rotation. Unpinned slots are filled by rotating the unpinned ring around the center — `assign[s] = unpinned[posMod(centerPos + (k - anchorIdx), m)]` (`StripLayout.swift:68`) — while pinned slots are taken directly from `pins`.
 - **Geometry** (`SlotGeometry.rects(cols:emphasis:focusSlot:in:config:)`): decides where each slot sits — the width split (focus ratio or equal), the height fraction (vertically centered), padding, gaps, and monocle centering. It always emits Quartz rectangles.
@@ -438,7 +448,7 @@ There are two kinds of surface, both shelled in AppKit:
 
 ## Testing and Development Workflow
 
-**Tests (`Tests/StripKitTests/`, 12 XCTest files, single target).** Each file maps to a pure type or an extracted static or free function: `StripLayoutTests`, `StripStateTests`, `DragResolverTests`, `AXAttrCacheTests` (synthetic keys, no real AX), `WindowObserverTests` (statics plus an injectable `now`), `WriteFailureTrackerTests`, `SettingsTests` (an isolated `UserDefaults(suiteName:)`, forward-compat decode), `OverviewGridTests`, `OverlayModelTests`, `SteppingAppsTests`, `StripControllerTests` (the static `unparkFrame`), and `ThemeTests`.
+**Tests (two targets: `Tests/StripCoreTests/` and `Tests/StripKitTests/`).** `StripCoreTests` covers the pure core: `SlotGeometry` via `DragResolverTests`, `SizeConstraintTests`, `MotionPolicyTests`, `PromotePolicyTests`; the Seats & Pile model via `TableTests`, `TableWorldTests`, `TableInvariantTests` (seeded random walks), `MovePlanTests`; the reducer via `ReducerCommandTests`, `ReducerWorldTests`, `ReducerInputTests` (motion budgets, every deadline, a random run of every event type), `LogLineTests` (the e2e-grepped log texts) and `ReplayTests` (log round trips, a recorded fixture session, a long seeded session); `ReduceBenchmarkTests` prints `reduce` p50/p90/max over 10k events. `TestSupport.swift` holds the `Session` driver (ticks on the reducer's own wakes, answers `.enumerate`/`.queryFocus`) and the seeded `Workload`. In `StripKitTests`, each file maps to a pure type or an extracted static or free function: `StripLayoutTests`, `StripStateTests`, `RingSweepTests`, `HitTestTests`, `AXAttrCacheTests` (synthetic keys, no real AX), `WindowObserverTests` (statics plus an injectable `now`), `WriteFailureTrackerTests`, `SettingsTests` (an isolated `UserDefaults(suiteName:)`, forward-compat decode), `OverviewGridTests`, `OverlayModelTests`, `SteppingAppsTests`, `StripControllerTests` (the static `unparkFrame`), `CoreDriverTests`, and `ThemeTests`.
 
 The tests cover the pure layer. The integration layer — `StripController` orchestration, the `WindowAnimator` loop, `AccessibilityService` / `AXWindow`, `HotkeyService`, `OverlayController`, the SwiftUI views, and `AppDelegate` wiring — is exercised by running the app rather than by automated tests, consistent with the extract-pure approach.
 
@@ -552,7 +562,7 @@ These behaviors are not represented in the code and would need explicit handling
 
 For future AI coding agents and new engineers working in this repository.
 
-**Read in this order:** `CLAUDE.md` (project rules, including the measure-first requirement and the documented platform dead-ends) → this document → `Sources/StripKit/StripController.swift` (the coordinator; read `apply`, `refresh`, `handleUserDrag`, `scheduleFocus`) → `Sources/StripKit/Layout/StripLayout.swift` and `SlotGeometry.swift` (the pure core) → `Sources/StripKit/Animation/WindowAnimator.swift` (the write path) → `Sources/StripKit/AppDelegate.swift` `start()` (the wiring).
+**Read in this order:** `CLAUDE.md` (project rules, including the measure-first requirement and the documented platform dead-ends) → this document → `Sources/StripKit/StripController.swift` (the coordinator; read `apply`, `refresh`, `handleUserDrag`, `scheduleFocus`) → `Sources/StripKit/Layout/StripLayout.swift` and `Sources/StripCore/Geometry/SlotGeometry.swift` (the pure core) → `Sources/StripKit/Animation/WindowAnimator.swift` (the write path) → `Sources/StripKit/AppDelegate.swift` `start()` (the wiring).
 
 **Boundaries to preserve:**
 

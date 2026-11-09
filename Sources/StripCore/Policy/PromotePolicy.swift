@@ -1,5 +1,5 @@
 import CoreGraphics
-import QuartzCore
+import Foundation
 
 /// What the user did most recently, for attributing a focus change (Seats & Pile).
 public enum UserInput: Equatable {
@@ -53,12 +53,17 @@ public enum PromotePolicy {
 /// `maxTravel` of its mouseDown, followed by no new mouseDown or scroll for the system's
 /// double-click interval. A drag, a text selection or a double-click never commits. Pure; the
 /// global mouse monitor feeds it and fires `commit(now:)` at the deadline `mouseUp` returns.
-public struct ClickCommitTracker {
+public struct ClickCommitTracker: Equatable {
     /// Maximum pointer travel between mouseDown and mouseUp, in points.
     public static let maxTravel: CGFloat = 4
 
+    private struct Waiting: Equatable {
+        var point: CGPoint
+        var deadline: CFTimeInterval
+    }
+
     private var downAt: CGPoint?
-    private var pending: (point: CGPoint, deadline: CFTimeInterval)?
+    private var pending: Waiting?
 
     public init() {}
 
@@ -82,7 +87,7 @@ public struct ClickCommitTracker {
             return nil
         }
         let deadline = now + doubleClickInterval
-        pending = (down, deadline)
+        pending = Waiting(point: down, deadline: deadline)
         return deadline
     }
 

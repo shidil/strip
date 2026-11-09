@@ -38,7 +38,10 @@
   hand-off made Console frontmost again, yet Strip logged `focus-follow: Activity Monitor` (the
   observer reads the activated app's focused window, not the frontmost app's). Only app-caused
   activations hit this: a click or ⌘ key cancels the hand-off (slice 0). Predates Seats & Pile
-  slice 1; the e2e helper `_focus_center` waits out the hand-off to avoid it.
+  slice 1; the e2e helper `_focus_center` waits out the hand-off to avoid it. The step 2 reducer
+  keeps the hand-off winning on purpose (owner decision 2026-11-09) but ignores the stale focus
+  change, so its model agrees with the OS (`ReducerInputTests.testAnAppActivationInsideAPendingHandOffLosesToIt`).
+  Fixed in the app when step 3 swaps the reducer in.
 
 ## Fixed
 
