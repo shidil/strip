@@ -39,8 +39,30 @@ public enum Command: Equatable {
     }
 }
 
+/// A raw input the executor saw outside Strip's own panels: the global mouse monitor and the hotkey
+/// tap. The reducer attributes focus changes to these and detects committed clicks from them.
+public enum InputEvent: Equatable {
+    /// A left mouseDown in another app's window, the Dock, a notification, the menu bar.
+    case mouseDown(at: CGPoint)
+    /// The matching mouseUp. `hit` is the managed window under the pointer (the executor hit-tests at
+    /// mouseUp, and only while click-to-center is on); `doubleClickInterval` is the system's
+    /// (`NSEvent.doubleClickInterval`), the wait before a single click commits.
+    case mouseUp(at: CGPoint, clickCount: Int, hit: CGWindowID?, doubleClickInterval: CFTimeInterval)
+    /// A scroll wheel event: a click waiting to commit wasn't a commitment.
+    case scroll
+    /// A keyDown carrying ⌘ (⌘Tab, ⌘`, an app shortcut).
+    case commandKey
+}
+
+/// A user setting the reducer's policy reads.
+public enum Setting: Equatable {
+    /// "Center on click or ⌘Tab": a committed click on a satellite, or ⌘Tab into one, promotes it.
+    /// Off by default until Spaces support lands (Seats & Pile step 5).
+    case clickToCenter(Bool)
+}
+
 /// Everything the reducer reacts to. One serial queue (main) feeds these in order, with the time
-/// each one happened at (`Reducer.reduce(_:_:now:)`). Focus and input events join in commit 5.
+/// each one happened at (`Reducer.reduce(_:_:now:)`).
 public enum CoreEvent: Equatable {
     /// A command. `repeated` is true for an OS auto-repeat of a held key.
     case chord(Command, repeated: Bool)
@@ -62,6 +84,17 @@ public enum CoreEvent: Equatable {
     case frameClamped(CGWindowID, requested: CGRect, actual: CGRect)
     /// AX writes to window `id` keep failing (`WriteFailureTracker`): it's gone.
     case writeFailed(CGWindowID)
+    /// macOS focus is now in window `id` of app `pid` (nil: unreadable): an app activation or a
+    /// focused-window change the observer saw, or the answer to `SideEffect.queryFocus`.
+    case focusChanged(CGWindowID?, pid: Int32)
+    /// A click, a scroll or a ⌘ key outside Strip.
+    case userInput(InputEvent)
+    /// App `pid` posted a notification that may change which windows exist (a window created,
+    /// closed or minimized, an app launched, quit, hidden or shown). The reducer re-enumerates once
+    /// the hints stop (`Timing.rescanDebounce`). The pid is kept for the replay log.
+    case membershipHint(pid: Int32)
+    /// A setting changed (the status menu).
+    case setting(Setting)
     /// The executor's one timer fired (see `SideEffect.wake`): run whatever is due.
     case tick
 }

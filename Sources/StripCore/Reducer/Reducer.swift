@@ -29,6 +29,14 @@ public enum Reducer {
             run.frameClamped(id, requested: requested, actual: actual)
         case let .writeFailed(id):
             run.writeFailed(id)
+        case let .focusChanged(id, pid):
+            run.focusChanged(id, pid: pid)
+        case let .userInput(input):
+            run.userInput(input)
+        case .membershipHint:
+            run.requestRescan()
+        case let .setting(setting):
+            run.setting(setting)
         case .tick:
             run.tick()
         }
@@ -54,6 +62,10 @@ struct Run {
     // MARK: - Events
 
     mutating func chord(_ command: Command, repeated: Bool) {
+        // An explicit command means a click still waiting to commit, or a pending ⌘Tab promote,
+        // wasn't what the user meant.
+        cancelClick()
+        state.pending.promote = nil
         guard command.isPaced else {
             perform(command)
             return
@@ -85,7 +97,9 @@ struct Run {
             state.handedFocus = handOff.value
             touchRecent(handOff.value)
             effects.append(.focus(handOff.value))
+            if let pid = state.windows[handOff.value]?.pid { state.input.ownActivation = Stamp(pid, at: now) }
         }
+        fireInputDeadlines()
     }
 
     // MARK: - Commands
@@ -179,7 +193,7 @@ struct Run {
     }
 
     /// Whether a trade's two windows cut rather than spring (L↔R in 3-up).
-    private func cuts(_ trade: Trade, _ t: Table) -> Bool {
+    func cuts(_ trade: Trade, _ t: Table) -> Bool {
         MotionPolicy.tradeCuts(trade.from, trade.to, cols: t.cols)
     }
 

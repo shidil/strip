@@ -18,6 +18,24 @@ public enum SideEffect: Equatable {
     case reseed(CGWindowID, at: CGRect)
     /// Write a line to `/tmp/strip.log` (`LogLine.text(name:)` formats it).
     case log(LogLine)
+    /// Enumerate every window (main thread) and send `CoreEvent.windowsEnumerated`.
+    case enumerate
+    /// Read macOS's focused window and send `CoreEvent.focusChanged`.
+    case queryFocus
+    /// Show a message in the overlay's pill (`Pill.text(name:)` formats it).
+    case pill(Pill)
+}
+
+/// A message for the overlay's pill.
+public enum Pill: Equatable {
+    /// The user's focus is in a parked window that an app, not the user, focused.
+    case parkedFocus(CGWindowID)
+
+    public func text(name: (CGWindowID) -> String) -> String {
+        switch self {
+        case let .parkedFocus(id): return "Focus is in parked \(name(id)) — ⌃⌥I"
+        }
+    }
 }
 
 /// Which verb a trade log line names.
@@ -70,6 +88,13 @@ public enum LogLine: Equatable {
     case constraintLearned(CGWindowID, SizeConstraint)
     case constraintUnsatisfiable(cols: Int)
     case axDrop(CGWindowID)
+    case focusFollow(CGWindowID, seat: Slot)
+    case handOffCancelled(UserInput)
+    case parkedFocus(CGWindowID)
+    /// `into` is nil for the primary seat ("center").
+    case summoned(CGWindowID, into: Slot?, displaced: CGWindowID?)
+    case clickNotPromoted(CGWindowID, seat: Slot, locked: Bool)
+    case clickToCenter(Bool)
 
     public func text(name: (CGWindowID) -> String) -> String {
         func two(_ v: CGFloat) -> String { String(format: "%.2f", Double(v)) }
@@ -122,6 +147,20 @@ public enum LogLine: Equatable {
             return "constraint-unsatisfiable: learned minimum sizes exceed the usable width in \(cols)-up — slotted windows spill off the display"
         case let .axDrop(id):
             return "ax-drop: window \(id) dead (AX writes failing) — dropped from strip"
+        case let .focusFollow(id, seat):
+            return "focus-follow: \(name(id)) → slot \(seat.rawValue)"
+        case let .handOffCancelled(cause):
+            return "focus hand-off cancelled ← \(cause == .mouse ? "mouseDown" : "⌘ key")"
+        case let .parkedFocus(id):
+            return "parked-focus: \(name(id)) focused without user input — left parked"
+        case let .summoned(id, seat, displaced):
+            return "summon: \(name(id)) → \(seat?.rawValue ?? "center")"
+                + (displaced.map { " (swapped with \(name($0)))" } ?? "")
+        case let .clickNotPromoted(id, seat, locked):
+            return "click: committed in \(name(id)) (\(seat.rawValue)) — not promoted ("
+                + (locked ? "locked seat" : "the click didn't land on it") + ")"
+        case let .clickToCenter(on):
+            return "click-to-center: \(on ? "on" : "off")"
         }
     }
 }
