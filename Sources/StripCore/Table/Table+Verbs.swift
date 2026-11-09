@@ -81,7 +81,7 @@ public extension Table {
     /// primary seat is never left empty). No-op for unknown or hidden windows.
     @discardableResult
     mutating func pick(_ id: CGWindowID, into seat: Slot) -> Bool {
-        guard slots.contains(seat), hole(of: id) == nil else { return false }
+        guard slots.contains(seat), hole(of: id) == nil, !hidden.contains(id) else { return false }
         if let from = self.seat(of: id) {
             if from == seat {
                 guard seat == primary, focusSeat != primary else { return false }
@@ -112,12 +112,13 @@ public extension Table {
     }
 
     /// Summon window `id` from the pile into `landingSeat` (the primary seat unless it's locked):
-    /// the user focused a parked window (⌘Tab, Dock, a notification). Returns the seat it landed in,
-    /// or nil when `id` isn't in the pile.
+    /// the user focused a parked window (⌘Tab, Dock, a notification). An empty primary seat (its
+    /// window is hidden) is filled first, lock or not. Returns the seat it landed in, or nil when
+    /// `id` isn't in the pile.
     @discardableResult
     mutating func summon(_ id: CGWindowID) -> Slot? {
         guard pile.contains(id) else { return nil }
-        let seat = landingSeat
+        let seat = seats[primary] == nil ? primary : landingSeat
         return pick(id, into: seat) ? seat : nil
     }
 
@@ -203,8 +204,8 @@ public extension Table {
     ///   one, else its own window, else L's.
     ///
     /// Windows that lose their seat go to the top of the pile: the old primary first, then R, then
-    /// L. Holes on seats that go away move to the bottom of the pile; the primary seat's hole
-    /// follows the primary seat. A lock survives only on a seat that keeps its window. `lastTrade`
+    /// L. Holes on seats that go away become `hidden`; the primary seat's hole follows the primary
+    /// seat. A lock survives only on a seat that keeps its window. `lastTrade`
     /// is dropped.
     @discardableResult
     mutating func setCols(_ n: Int) -> Bool {
@@ -246,14 +247,17 @@ public extension Table {
         }
 
         var newHoles: [Slot: CGWindowID] = [:]
-        for (s, id) in old.holes {
+        var newHidden = old.hidden
+        for s in Slot.allCases {
+            guard let id = old.holes[s] else { continue }
             let target = s == old.primary ? newPrimary : s
-            if newSlots.contains(target), newHoles[target] == nil { newHoles[target] = id } else { newPile.append(id) }
+            if newSlots.contains(target), newHoles[target] == nil { newHoles[target] = id } else { newHidden.append(id) }
         }
 
         seats = newSeats
         pile = newPile
         holes = newHoles
+        hidden = newHidden
         cols = n
         locks = Set(old.locks.filter { s in newSlots.contains(s) && newSeats[s] != nil && newSeats[s] == old.seats[s] })
         focusSeat = focused.flatMap { id in newSeats.first { $0.value == id }?.key } ?? newPrimary

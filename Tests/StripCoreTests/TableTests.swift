@@ -430,7 +430,8 @@ final class TableTests: XCTestCase {
         var t = Table(seats: [.C: 3, .R: 4], pile: [5], holes: [.L: 2])
         t.setCols(1)
         XCTAssertEqual(t.holes, [:])
-        XCTAssertEqual(t.pile.last, 2, "a hole whose seat goes away waits at the bottom of the pile")
+        XCTAssertEqual(t.hidden, [2], "a hole whose seat goes away is set aside, not drawn")
+        XCTAssertEqual(t.pile, [4, 5], "R's window joins the pile")
         assertSound(t)
     }
 

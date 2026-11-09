@@ -59,25 +59,35 @@ public struct MovePlan: Equatable {
     /// The plan from table `from` to table `to` on `stage`.
     ///
     /// `current` is each window's frame now (the reducer passes what it last commanded); a window
-    /// missing from it is assumed to be at its target on `from`. `edgesBefore` / `edgesAfter` are the
-    /// pile's park edges on each table (`Table.parkEdges`); `motion` is how cards enter and leave.
-    /// A spring that would sweep across the display (`MotionPolicy.sweepsAcross`) becomes a cut.
-    public static func build(from: Table, to: Table, on stage: Stage,
+    /// missing from it is assumed to be at its target on `from`. A window whose `current` frame is
+    /// off its unchanged target (the user dragged it, a tab switch showed a new window) is moved
+    /// back: a spring to a seat, a snap to a park. `previous` is the stage `from` was laid out on
+    /// when the geometry changed (`transitions`). `edgesBefore` / `edgesAfter` are the pile's park
+    /// edges on each table (`Table.parkEdges`); `motion` is how cards enter and leave. A spring that
+    /// would sweep across the display (`MotionPolicy.sweepsAcross`) becomes a cut.
+    public static func build(from: Table, to: Table, on stage: Stage, previous: Stage? = nil,
                              edgesBefore: [CGWindowID: Edge] = [:], edgesAfter: [CGWindowID: Edge] = [:],
                              motion: CardMotion = .cut,
                              current: [CGWindowID: CGRect] = [:]) -> MovePlan {
-        let kinds = transitions(from: from, to: to, on: stage, edgesBefore: edgesBefore,
+        var kinds = transitions(from: from, to: to, on: stage, previous: previous, edgesBefore: edgesBefore,
                                 edgesAfter: edgesAfter, motion: motion)
-        let was = from.targets(on: stage, parkEdges: edgesBefore)
+        let was = from.targets(on: previous ?? stage, parkEdges: edgesBefore)
         let targets = to.targets(on: stage, parkEdges: edgesAfter)
         let vis = stage.vis
         let screens = stage.displays.isEmpty ? [vis] : stage.displays
         func onScreen(_ r: CGRect) -> Bool { screens.contains { r.intersects($0) } }
 
+        for (id, kind) in kinds where kind == .stay {
+            if let now = current[id], let target = targets[id], !Self.matches(now, target) {
+                kinds[id] = onScreen(target) ? .spring : .snapOffscreen
+            }
+        }
+
         var prepare: [MoveStep] = [], show: [MoveStep] = [], clear: [MoveStep] = []
         for id in kinds.keys.sorted() {
             guard let kind = kinds[id], kind != .stay, let target = targets[id] else { continue }
             let now = current[id] ?? was[id]
+            if let now, Self.matches(now, target) { continue } // already there: no write
             switch kind {
             case .stay:
                 continue
@@ -107,6 +117,13 @@ public struct MovePlan: Equatable {
             }
         }
         return MovePlan(phases: [prepare, show, clear])
+    }
+
+    /// Whether two frames are the same within the animator's settle tolerance (1.5 pt per edge;
+    /// `WindowAnimator.frameMatches`).
+    public static func matches(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 1.5) -> Bool {
+        abs(a.minX - b.minX) <= tolerance && abs(a.minY - b.minY) <= tolerance
+            && abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
     }
 
     /// A parked frame resized to `size` without leaving its park: anchored on the side that faces

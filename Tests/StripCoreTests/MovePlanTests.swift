@@ -117,7 +117,7 @@ final class MovePlanTests: XCTestCase {
         XCTAssertEqual(transitions(from: hidden, to: shown, on: stage)[2], .cut, "the restore takes its seat")
         var mono = hidden
         mono.setCols(1)
-        XCTAssertEqual(mono.pile.last, 2)
+        XCTAssertEqual(mono.hidden, [2])
         XCTAssertEqual(transitions(from: hidden, to: mono, on: stage)[2], .stay, "a hidden window sent to the pile stays put")
     }
 

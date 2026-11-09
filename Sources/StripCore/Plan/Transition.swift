@@ -27,19 +27,31 @@ public enum CardMotion: Equatable {
 
 /// Where a window is on a table.
 enum Spot: Equatable {
+    /// `hole` covers both a seat's hole and `Table.hidden`: a window that can't be seen.
     case seat(Slot), pile, hole
 
     init?(_ id: CGWindowID, on t: Table) {
-        if let s = t.seat(of: id) { self = .seat(s) } else if t.hole(of: id) != nil { self = .hole } else if t.pile.contains(id) { self = .pile } else { return nil }
+        if let s = t.seat(of: id) {
+            self = .seat(s)
+        } else if t.hole(of: id) != nil || t.hidden.contains(id) {
+            self = .hole
+        } else if t.pile.contains(id) {
+            self = .pile
+        } else {
+            return nil
+        }
     }
 }
 
 /// The transition of every window that's on `to` (windows only on `from` are gone and need none).
 /// `edgesBefore` / `edgesAfter` are the pile's park edges on each table (see `Table.parkEdges`).
-public func transitions(from: Table, to: Table, on stage: Stage,
+/// `previous` is the stage `from` was laid out on, when the geometry itself changed (a display
+/// change, a learned size constraint); it defaults to `stage`.
+public func transitions(from: Table, to: Table, on stage: Stage, previous: Stage? = nil,
                         edgesBefore: [CGWindowID: Edge] = [:], edgesAfter: [CGWindowID: Edge] = [:],
                         motion: CardMotion = .cut) -> [CGWindowID: Transition] {
-    let fromRects = from.seatRects(on: stage)
+    let old = previous ?? stage
+    let fromRects = from.seatRects(on: old)
     let toRects = to.seatRects(on: stage)
     let enterOrLeave: Transition = motion == .slide ? .spring : .cut
     var out: [CGWindowID: Transition] = [:]
@@ -52,7 +64,7 @@ public func transitions(from: Table, to: Table, on stage: Stage,
         case (nil, _), (.hole?, .seat):
             out[id] = .cut // a new window placed or parked; a restore takes its seat
         case (.pile?, .pile):
-            let was = from.parkFrame(for: id, edge: edgesBefore[id] ?? .right, on: stage)
+            let was = from.parkFrame(for: id, edge: edgesBefore[id] ?? .right, on: old)
             let now = to.parkFrame(for: id, edge: edgesAfter[id] ?? .right, on: stage)
             out[id] = was == now ? .stay : .snapOffscreen
         case let (.seat(s1)?, .seat(s2)):

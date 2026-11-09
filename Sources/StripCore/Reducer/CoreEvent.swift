@@ -40,11 +40,28 @@ public enum Command: Equatable {
 }
 
 /// Everything the reducer reacts to. One serial queue (main) feeds these in order, with the time
-/// each one happened at (`Reducer.reduce(_:_:now:)`). Commit 3 has the command path; window, focus
-/// and input events join in the next commits.
+/// each one happened at (`Reducer.reduce(_:_:now:)`). Focus and input events join in commit 5.
 public enum CoreEvent: Equatable {
     /// A command. `repeated` is true for an OS auto-repeat of a held key.
     case chord(Command, repeated: Bool)
+    /// A fresh enumeration: every window that exists, **front to back**, with transient misses
+    /// already resolved by the executor (an absent window is closed), and the window macOS has
+    /// focused. Windows that appear, close, hide or come back are all found by diffing this
+    /// snapshot (`Run.enumerated`); the observer's create / destroy / miniaturize notifications are
+    /// triggers for it, not events of their own.
+    case windowsEnumerated([WindowInfo], focused: CGWindowID?)
+    /// A native tab switch: window `new` now shows the pane `old` showed.
+    case tabReplaced(old: CGWindowID, new: WindowInfo)
+    /// The strip display's visible frame or the display arrangement changed.
+    case displayChanged(vis: CGRect, displays: [CGRect])
+    /// The user finished moving (`wasResize` false) or resizing window `id`; `frame` is where they
+    /// left it.
+    case dragEnded(CGWindowID, wasResize: Bool, frame: CGRect)
+    /// Window `id` settled at `actual` instead of `requested`, and still was after the executor's
+    /// confirm read (`StripController.clampLearnConfirmDelay`): the app clamps its size.
+    case frameClamped(CGWindowID, requested: CGRect, actual: CGRect)
+    /// AX writes to window `id` keep failing (`WriteFailureTracker`): it's gone.
+    case writeFailed(CGWindowID)
     /// The executor's one timer fired (see `SideEffect.wake`): run whatever is due.
     case tick
 }

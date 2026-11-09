@@ -18,6 +18,9 @@ public struct Table: Equatable {
     /// nothing collides when macOS restores the window to its own frame. A seat may hold a window
     /// *and* a hole (C is refilled when its window hides); the restore resolves that (step 3).
     public var holes: [Slot: CGWindowID]
+    /// Hidden or minimized windows that own no seat (they were in the pile, or their seat went
+    /// away with a column change). Never drawn: a restore summons them back.
+    public var hidden: [CGWindowID]
     /// Locked seats (today's pins). Pass, new windows, close refills and automatic promotes skip
     /// them; explicit draws and picks still work on them, and the lock stays with the seat.
     public var locks: Set<Slot>
@@ -31,11 +34,12 @@ public struct Table: Equatable {
     public var config: LayoutConfig
 
     public init(seats: [Slot: CGWindowID] = [:], pile: [CGWindowID] = [], holes: [Slot: CGWindowID] = [:],
-                locks: Set<Slot> = [], focusSeat: Slot? = nil, lastTrade: Trade? = nil, cols: Int = 3,
+                hidden: [CGWindowID] = [], locks: Set<Slot> = [], focusSeat: Slot? = nil, lastTrade: Trade? = nil, cols: Int = 3,
                 emphasis: Emphasis = .focus, config: LayoutConfig = .default) {
         self.seats = seats
         self.pile = pile
         self.holes = holes
+        self.hidden = hidden
         self.locks = locks
         self.focusSeat = focusSeat ?? Table.primary(cols: cols)
         self.lastTrade = lastTrade
@@ -108,7 +112,7 @@ public struct Table: Equatable {
     }
 
     public func contains(_ id: CGWindowID) -> Bool {
-        seat(of: id) != nil || hole(of: id) != nil || pile.contains(id)
+        seat(of: id) != nil || hole(of: id) != nil || pile.contains(id) || hidden.contains(id)
     }
 
     /// Seated windows in seat order (L, C, R).
@@ -116,8 +120,8 @@ public struct Table: Equatable {
         Slot.allCases.compactMap { seats[$0] }
     }
 
-    /// Every managed window: seated (seat order), then holes (seat order), then the pile.
+    /// Every managed window: seated (seat order), then holes (seat order), the pile, the hidden.
     public var members: [CGWindowID] {
-        seated + Slot.allCases.compactMap { holes[$0] } + pile
+        seated + Slot.allCases.compactMap { holes[$0] } + pile + hidden
     }
 }

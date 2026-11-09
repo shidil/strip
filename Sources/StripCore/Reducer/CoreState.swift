@@ -55,6 +55,11 @@ public struct CoreState: Equatable {
     public var lastTargets: [CGWindowID: CGRect]
     /// The window Strip last handed keyboard focus to (or that macOS reported focused).
     public var handedFocus: CGWindowID?
+    /// What the last enumeration said about each managed window.
+    public var windows: [CGWindowID: WindowInfo]
+    /// Managed windows by when they last had focus, most recent first (picks the satellite that
+    /// refills an empty center).
+    public var recent: [CGWindowID]
     public var pending: Pending
 
     public init(table: Table = Table(), stage: Stage) {
@@ -63,6 +68,8 @@ public struct CoreState: Equatable {
         self.parkEdges = Table.parkEdges([:], from: table, to: table)
         self.lastTargets = [:]
         self.handedFocus = nil
+        self.windows = [:]
+        self.recent = []
         self.pending = Pending()
     }
 }

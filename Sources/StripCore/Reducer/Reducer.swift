@@ -17,6 +17,18 @@ public enum Reducer {
         switch event {
         case let .chord(command, repeated):
             run.chord(command, repeated: repeated)
+        case let .windowsEnumerated(windows, focused):
+            run.enumerated(windows, focused: focused)
+        case let .tabReplaced(old, new):
+            run.tabReplaced(old, new)
+        case let .displayChanged(vis, displays):
+            run.displayChanged(vis: vis, displays: displays)
+        case let .dragEnded(id, wasResize, frame):
+            run.dragEnded(id, wasResize: wasResize, frame: frame)
+        case let .frameClamped(id, requested, actual):
+            run.frameClamped(id, requested: requested, actual: actual)
+        case let .writeFailed(id):
+            run.writeFailed(id)
         case .tick:
             run.tick()
         }
@@ -71,6 +83,7 @@ struct Run {
         if let handOff = state.pending.focusHandOff, handOff.isDue(now) {
             state.pending.focusHandOff = nil
             state.handedFocus = handOff.value
+            touchRecent(handOff.value)
             effects.append(.focus(handOff.value))
         }
     }
@@ -173,19 +186,42 @@ struct Run {
     // MARK: - Applying a new table
 
     /// Adopt table `t`: plan the motion from `before`, move the park edges and the commanded
-    /// frames along, schedule the focus hand-off, and ask for a render (and a save). A table equal
-    /// to `before` changes nothing.
-    mutating func commit(_ t: Table, from before: Table, motion: CardMotion = .cut, persist: Bool = false) {
-        guard t != before else { return }
+    /// frames along, schedule the focus hand-off, and ask for a render (and a save).
+    ///
+    /// `previous` is the stage `before` was laid out on when the geometry changed (a display change,
+    /// a learned constraint). `moved` gives windows that are really somewhere else than the reducer
+    /// last commanded (a drag, a new window, a tab switch); the plan starts them from there. With
+    /// `steppingCuts`, windows whose app steps its size (terminals) move in one write instead of a
+    /// spring. Hidden windows are never written. Nothing changed (same table, same geometry, no
+    /// moved window) means nothing to do.
+    mutating func commit(_ t: Table, from before: Table, motion: CardMotion = .cut, previous: Stage? = nil,
+                         moved: [CGWindowID: CGRect] = [:], steppingCuts: Bool = false, persist: Bool = false) {
+        guard t != before || previous != nil || !moved.isEmpty else { return }
+        for (id, frame) in moved { state.lastTargets[id] = frame }
         let edgesAfter = Table.parkEdges(state.parkEdges, from: before, to: t)
-        let next = MovePlan.build(from: before, to: t, on: state.stage, edgesBefore: state.parkEdges,
-                                  edgesAfter: edgesAfter, motion: motion, current: state.lastTargets)
+        let built = MovePlan.build(from: before, to: t, on: state.stage, previous: previous,
+                                   edgesBefore: state.parkEdges, edgesAfter: edgesAfter, motion: motion,
+                                   current: state.lastTargets)
+        let windows = state.windows
+        let next = MovePlan(phases: built.phases.map { phase in
+            phase.filter { windows[$0.id].map { $0.visibility == .shown } ?? true }.map { step in
+                guard steppingCuts, step.kind == .spring, windows[step.id]?.steps == true else { return step }
+                return MoveStep(id: step.id, frame: step.frame, kind: .cut)
+            }
+        })
         plan = MovePlan(phases: plan.phases + next.phases)
         for step in next.steps { state.lastTargets[step.id] = step.frame }
         let members = Set(t.members)
         state.lastTargets = state.lastTargets.filter { members.contains($0.key) }
+        state.windows = state.windows.filter { members.contains($0.key) }
+        state.stage.constraints = state.stage.constraints.filter { members.contains($0.key) }
+        state.recent.removeAll { !members.contains($0) }
+        if let h = state.handedFocus, !members.contains(h) { state.handedFocus = nil }
         state.parkEdges = edgesAfter
         state.table = t
+        if !next.isEmpty, !state.stage.constraints.isEmpty, spills(t) {
+            log(.constraintUnsatisfiable(cols: t.cols))
+        }
         if t.focusedId != before.focusedId { scheduleFocusHandOff() }
         effects.append(.render)
         if persist { effects.append(.persist) }
@@ -205,5 +241,18 @@ struct Run {
 
     mutating func log(_ line: LogLine) {
         effects.append(.log(line))
+    }
+
+    /// `id` just had focus: most recent first.
+    mutating func touchRecent(_ id: CGWindowID) {
+        state.recent.removeAll { $0 == id }
+        state.recent.insert(id, at: 0)
+    }
+
+    /// Whether learned minimum sizes push a seat past the display's edges (`SlotGeometry` then
+    /// emits the floors anyway: an honest overlap).
+    private func spills(_ t: Table) -> Bool {
+        let vis = state.stage.vis
+        return t.seatRects(on: state.stage).values.contains { $0.minX < vis.minX - 0.5 || $0.maxX > vis.maxX + 0.5 }
     }
 }

@@ -13,6 +13,9 @@ public enum SideEffect: Equatable {
     case render
     /// Save the layout settings (`cols`, `emphasis`, `config`).
     case persist
+    /// Window `id` is really at `at` (the user dragged it): restart its motion from there, with the
+    /// snap-back spring, instead of from where the animator last left it.
+    case reseed(CGWindowID, at: CGRect)
     /// Write a line to `/tmp/strip.log` (`LogLine.text(name:)` formats it).
     case log(LogLine)
 }
@@ -56,6 +59,17 @@ public enum LogLine: Equatable {
     case monocleWidth(CGFloat)
     case height(CGFloat)
     case gap(inner: CGFloat, outer: CGFloat)
+    case added(CGWindowID, seat: Slot?)
+    case adopted(count: Int)
+    case closed(CGWindowID, refill: CGWindowID?)
+    case hidden(CGWindowID, refill: CGWindowID?)
+    case restored(CGWindowID, seat: Slot?)
+    case tabReplaced(old: CGWindowID, new: CGWindowID)
+    case resizeKept(focusRatio: CGFloat, monocleWidth: CGFloat, height: CGFloat)
+    case snappedBack(CGWindowID)
+    case constraintLearned(CGWindowID, SizeConstraint)
+    case constraintUnsatisfiable(cols: Int)
+    case axDrop(CGWindowID)
 
     public func text(name: (CGWindowID) -> String) -> String {
         func two(_ v: CGFloat) -> String { String(format: "%.2f", Double(v)) }
@@ -85,6 +99,29 @@ public enum LogLine: Equatable {
             return "height: \(two(v))"
         case let .gap(inner, outer):
             return "gap: \(Int(inner)) pad: \(Int(outer))"
+        case let .added(id, seat):
+            return "new: \(name(id)) → \(seat.map(\.rawValue) ?? "the pile")"
+        case let .adopted(count):
+            return "adopt: \(count) window(s)"
+        case let .closed(id, refill):
+            return "close: \(name(id))" + (refill.map { " (refilled with \(name($0)))" } ?? "")
+        case let .hidden(id, refill):
+            return "hide: \(name(id))" + (refill.map { " (refilled with \(name($0)))" } ?? "")
+        case let .restored(id, seat):
+            return "restore: \(name(id)) → \(seat.map(\.rawValue) ?? "the pile")"
+        case let .tabReplaced(old, new):
+            return "tab: \(name(new)) replaces \(name(old))"
+        case let .resizeKept(focusRatio, monocleWidth, height):
+            return "user-resize kept: focusRatio \(two(focusRatio)), monocle \(two(monocleWidth)), height \(two(height))"
+        case let .snappedBack(id):
+            return "user-drag: window \(id) snapped back to slot"
+        case let .constraintLearned(id, c):
+            func f(_ v: CGFloat?) -> String { v.map { String(format: "%.0f", Double($0)) } ?? "-" }
+            return "constraint-learned: \(name(id)) min=\(f(c.minWidth))x\(f(c.minHeight)) max=\(f(c.maxWidth))x\(f(c.maxHeight))"
+        case let .constraintUnsatisfiable(cols):
+            return "constraint-unsatisfiable: learned minimum sizes exceed the usable width in \(cols)-up — slotted windows spill off the display"
+        case let .axDrop(id):
+            return "ax-drop: window \(id) dead (AX writes failing) — dropped from strip"
         }
     }
 }

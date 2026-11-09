@@ -4,7 +4,7 @@ public extension Table {
     /// Every broken invariant, as a readable message; empty when the table is sound. The design
     /// doc's invariants (*Pure state*) that are properties of one table:
     ///
-    /// - every managed window is in exactly one of `seats`, `pile` or `holes`;
+    /// - every managed window is in exactly one of `seats`, `pile`, `holes` or `hidden`;
     /// - the primary seat is never empty while any face-up or face-down card exists;
     ///
     /// plus the structural ones the verbs rely on: seat, hole and lock keys exist for `cols`, focus
