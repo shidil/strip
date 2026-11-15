@@ -11,6 +11,10 @@ func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePoin
 
 /// Returns the `CGWindowID` for an accessibility window element, or `nil` if unavailable.
 func axWindowID(_ element: AXUIElement) -> CGWindowID? {
+    // Signposted: `animate` calls this twice per window on main, and whether it is a cross-process
+    // round trip decides whether to cache it (Seats & Pile step 3 baseline).
+    let sp = Signpost.log.beginInterval("axWindowID")
+    defer { Signpost.log.endInterval("axWindowID", sp) }
     var wid: CGWindowID = 0
     return _AXUIElementGetWindow(element, &wid) == .success ? wid : nil
 }

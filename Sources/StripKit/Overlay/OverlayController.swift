@@ -305,6 +305,10 @@ public final class OverlayController {
     /// when `quartzFrame` is `nil`. Driven from the animator's per-tick callback so it tracks motion.
     public func updateFocusRing(_ quartzFrame: CGRect?) {
         onMain {
+            // Runs inside `animate` and every display-link `frame` on main (step 3 baseline: is this
+            // what keeps `animate` above a millisecond with nothing to move?).
+            let sp = Signpost.log.beginInterval("focusRing")
+            defer { Signpost.log.endInterval("focusRing", sp) }
             guard let q = quartzFrame else { self.focusRingPanel.orderOut(nil); return }
             let cocoa = Coordinates.toCocoa(q).insetBy(dx: -Self.ringInset, dy: -Self.ringInset)
             self.focusRingPanel.setFrame(cocoa, display: true)

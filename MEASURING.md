@@ -47,7 +47,8 @@ commands and the non-obvious gotchas that make each one actually work. Grouped b
   ```
   Present intervals: `apply`, `animate`, `frame`, `placements`, `allWindows`, `refresh`,
   `watchWindows`, `overlayRender`, `tabScan` (one window's tab walk, search start),
-  `tabPress` (one tab switch: peek, restore, or pick).
+  `tabPress` (one tab switch: peek, restore, or pick), `focusRing` (the focus-ring panel move,
+  inside `animate` and every `frame`), `axWindowID` (one `_AXUIElementGetWindow`).
 - **Events** (points in time):
   ```swift
   Signpost.log.emitEvent("inFlightDrop", "id=\(id)")
