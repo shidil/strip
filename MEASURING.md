@@ -48,7 +48,9 @@ commands and the non-obvious gotchas that make each one actually work. Grouped b
   Present intervals: `apply`, `animate`, `frame`, `placements`, `allWindows`, `refresh`,
   `watchWindows`, `overlayRender`, `tabScan` (one window's tab walk, search start),
   `tabPress` (one tab switch: peek, restore, or pick), `focusRing` (the focus-ring panel move,
-  inside `animate` and every `frame`), `axWindowID` (one `_AXUIElementGetWindow`).
+  inside `animate` and every `frame`), `axWindowID` (a `_AXUIElementGetWindow` cache miss — a round
+  trip to the window's app; hits in `WindowIDCache` aren't timed, so in steady motion this should
+  read n≈0).
 - **Events** (points in time):
   ```swift
   Signpost.log.emitEvent("inFlightDrop", "id=\(id)")
