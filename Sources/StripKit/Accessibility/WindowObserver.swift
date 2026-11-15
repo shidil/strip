@@ -289,6 +289,7 @@ public final class WindowObserver {
                 me.scheduleFocusReconcile(pid: pid)
             case .full:
                 // kAXUIElementDestroyed / kAXWindowMiniaturized / kAXWindowDeminiaturized — membership.
+                if name == kAXUIElementDestroyedNotification { WindowIDCache.shared.forget(element) }
                 me.scheduleReconcile(WindowObserver.reason(name, element))
             }
         }
@@ -360,6 +361,7 @@ public final class WindowObserver {
     }
 
     private func detach(pid: pid_t) {
+        WindowIDCache.shared.forget(pid: pid)
         guard let observer = observers[pid] else { return }
         CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         observers[pid] = nil
